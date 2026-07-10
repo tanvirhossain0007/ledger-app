@@ -73,33 +73,13 @@ function hexToRgba(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-function ARLogo({ T, size = 34 }) {
+function ARLogo({ size = 34 }) {
   return (
-    <div style={{
-      width: size, height: size, borderRadius: "30% 70% 65% 35% / 45% 40% 60% 55%",
-      background: `linear-gradient(135deg, ${T.gold}, ${T.rule})`,
-      display: "flex", alignItems: "center", justifyContent: "center",
-      color: "#fff", fontWeight: 700, letterSpacing: -0.5,
-      fontSize: size * 0.4, flexShrink: 0, boxShadow: "0 2px 6px rgba(0,0,0,.25)",
-    }} className="lg-display">
-      AR
-    </div>
-  );
-}
-
-function ARWatermark({ T }) {
-  return (
-    <div aria-hidden="true" style={{
-      position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none",
-      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 0,
-    }}>
-      <div className="lg-display" style={{
-        fontSize: "clamp(110px, 32vw, 320px)", fontWeight: 700, color: T.ink, opacity: 0.035,
-        userSelect: "none", whiteSpace: "nowrap", transform: "rotate(-8deg)",
-      }}>
-        AR
-      </div>
-    </div>
+    <img
+      src="/arham-shield-logo.png"
+      alt="Arham Traders"
+      style={{ width: size, height: size, objectFit: "contain", flexShrink: 0, filter: "drop-shadow(0 2px 4px rgba(0,0,0,.35))" }}
+    />
   );
 }
 
@@ -368,7 +348,16 @@ export default function App() {
   }
 
   return (
-    <div style={{ fontFamily: "'Inter', sans-serif", background: T.paper, minHeight: 600, color: T.ink, transition: "background .2s", overflowX: "hidden" }}>
+    <div style={{
+      fontFamily: "'Inter', sans-serif",
+      backgroundColor: "#0E1A28",
+      backgroundImage: `linear-gradient(rgba(10,18,28,${dark ? 0.72 : 0.55}), rgba(10,18,28,${dark ? 0.8 : 0.6})), url('/arham-bg.jpg')`,
+      backgroundSize: "cover",
+      backgroundPosition: "center",
+      backgroundAttachment: "fixed",
+      backgroundRepeat: "no-repeat",
+      minHeight: 600, color: T.ink, transition: "background .2s", overflowX: "hidden",
+    }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
         .lg-mono { font-family: 'IBM Plex Mono', monospace; }
@@ -438,10 +427,10 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
       <div style={{ width: "100%", maxWidth: 380 }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
-            <ARLogo T={T} size={52} />
+            <ARLogo size={52} />
           </div>
-          <div className="lg-display" style={{ fontSize: 26, fontWeight: 600, color: T.ink, letterSpacing: 0.5 }}>ARHAM TRADERS</div>
-          <div style={{ fontSize: 12, color: T.slate, marginTop: 6 }}>462/2 Saheen Academy Road, Feni</div>
+          <div className="lg-display" style={{ fontSize: 26, fontWeight: 600, color: "#fff", letterSpacing: 0.5, textShadow: "0 2px 8px rgba(0,0,0,.5)" }}>ARHAM TRADERS</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,.75)", marginTop: 6, textShadow: "0 1px 4px rgba(0,0,0,.5)" }}>462/2 Saheen Academy Road, Feni</div>
         </div>
         <div style={{ background: T.paperCard, border: `1px solid ${T.line}`, borderRadius: 12, padding: 24 }}>
           <div style={{ display: "flex", gap: 6, marginBottom: 18, background: T.paper, borderRadius: 8, padding: 4 }}>
@@ -466,7 +455,7 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
             </button>
           </form>
         </div>
-        <button className="lg-btn" onClick={() => setDark(!dark)} style={{ margin: "18px auto 0", background: "transparent", color: T.slate }}>
+        <button className="lg-btn" onClick={() => setDark(!dark)} style={{ margin: "18px auto 0", background: "rgba(255,255,255,.14)", color: "#fff", borderRadius: 20, padding: "6px 14px" }}>
           {dark ? <Sun size={14} /> : <Moon size={14} />} {dark ? "Light mode" : "Dark mode"}
         </button>
       </div>
@@ -513,7 +502,7 @@ function SidebarInner({ T, dark, setDark, logout, title, navItems, view, setView
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 8px 18px" }}>
-        <ARLogo T={T} size={32} />
+        <ARLogo size={32} />
         <div>
           <div className="lg-display" style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.1 }}>ARHAM TRADERS</div>
           <div style={{ fontSize: 10.5, color: "rgba(255,255,255,.5)", marginTop: 2 }}>{title}</div>
@@ -551,7 +540,7 @@ function Shell({ T, dark, setDark, logout, title, navItems, view, setView, child
           <button onClick={() => setDrawerOpen(true)} style={{ background: "transparent", border: "none", color: "#fff", cursor: "pointer", padding: 4 }}>
             <Menu size={22} />
           </button>
-          <ARLogo T={T} size={28} />
+          <ARLogo size={28} />
           <div className="lg-display" style={{ fontSize: 14, fontWeight: 600 }}>ARHAM TRADERS</div>
         </div>
 
@@ -570,9 +559,11 @@ function Shell({ T, dark, setDark, logout, title, navItems, view, setView, child
           </div>
         )}
 
-        <div style={{ padding: 16, position: "relative" }}>
-          <ARWatermark T={T} />
-          <div style={{ position: "relative", zIndex: 1 }}>{children}</div>
+        <div style={{
+          margin: 10, padding: 16, borderRadius: 14,
+          background: hexToRgba(T.paper, 0.92), backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+        }}>
+          {children}
         </div>
       </div>
     );
@@ -583,9 +574,11 @@ function Shell({ T, dark, setDark, logout, title, navItems, view, setView, child
       <div className="no-print" style={{ width: 220, background: T.ink, color: "#fff", padding: "20px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
         <SidebarInner T={T} dark={dark} setDark={setDark} logout={logout} title={title} navItems={navItems} view={view} setView={setView} />
       </div>
-      <div style={{ flex: 1, padding: 24, minWidth: 0, position: "relative" }}>
-        <ARWatermark T={T} />
-        <div style={{ position: "relative", zIndex: 1 }}>{children}</div>
+      <div style={{
+        flex: 1, minWidth: 0, padding: 24,
+        background: hexToRgba(T.paper, 0.92), backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+      }}>
+        {children}
       </div>
     </div>
   );
