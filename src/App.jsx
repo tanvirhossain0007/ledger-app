@@ -65,6 +65,44 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function hexToRgba(hex, alpha) {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function ARLogo({ T, size = 34 }) {
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: "30% 70% 65% 35% / 45% 40% 60% 55%",
+      background: `linear-gradient(135deg, ${T.gold}, ${T.rule})`,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      color: "#fff", fontWeight: 700, letterSpacing: -0.5,
+      fontSize: size * 0.4, flexShrink: 0, boxShadow: "0 2px 6px rgba(0,0,0,.25)",
+    }} className="lg-display">
+      AR
+    </div>
+  );
+}
+
+function ARWatermark({ T }) {
+  return (
+    <div aria-hidden="true" style={{
+      position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none",
+      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 0,
+    }}>
+      <div className="lg-display" style={{
+        fontSize: 320, fontWeight: 700, color: T.ink, opacity: 0.035,
+        userSelect: "none", whiteSpace: "nowrap", transform: "rotate(-8deg)",
+      }}>
+        AR
+      </div>
+    </div>
+  );
+}
+
 function monthKey(iso) {
   return iso ? iso.slice(0, 7) : "";
 }
@@ -399,8 +437,10 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
     <div style={{ minHeight: 560, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
       <div style={{ width: "100%", maxWidth: 380 }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div className="lg-display" style={{ fontSize: 28, fontWeight: 600, color: T.ink }}>Ledger &amp; Cash Flow</div>
-          <div style={{ fontSize: 13, color: T.slate, marginTop: 4 }}>Customer accounts, sales, payments and cash flow in one book.</div>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+            <ARLogo T={T} size={52} />
+          </div>
+          <div className="lg-display" style={{ fontSize: 26, fontWeight: 600, color: T.ink, letterSpacing: 0.5 }}>ARHAM TRADERS</div>
         </div>
         <div style={{ background: T.paperCard, border: `1px solid ${T.line}`, borderRadius: 12, padding: 24 }}>
           <div style={{ display: "flex", gap: 6, marginBottom: 18, background: T.paper, borderRadius: 8, padding: 4 }}>
@@ -420,8 +460,7 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
             <label style={{ fontSize: 12, color: T.slate, fontWeight: 600 }}>Password</label>
             <input className="lg-input" type="password" style={{ marginTop: 4, marginBottom: 8 }} value={p} onChange={(e) => setP(e.target.value)} placeholder="••••••••" />
             {err && <div style={{ color: T.rule, fontSize: 12, marginBottom: 10 }}>{err}</div>}
-            {mode === "admin" && <div style={{ fontSize: 11, color: T.slateLight, marginBottom: 14 }}>Demo credentials: admin / admin123</div>}
-            <button className="lg-btn" type="submit" style={{ width: "100%", background: T.ink, color: "#fff", justifyContent: "center", padding: "10px 0" }}>
+            <button className="lg-btn" type="submit" style={{ width: "100%", background: T.ink, color: "#fff", justifyContent: "center", padding: "10px 0", marginTop: 6 }}>
               Sign in
             </button>
           </form>
@@ -435,31 +474,58 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
 }
 
 // ================= SHELL =================
+function NavButton({ item, active, onClick, T }) {
+  const [hover, setHover] = useState(false);
+  const color = item.color || T.gold;
+  const bg = active ? color : hover ? hexToRgba(color, 0.22) : "transparent";
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 7, border: "none",
+        cursor: "pointer", fontSize: 13.5, fontWeight: 500, textAlign: "left",
+        background: bg, transition: "background .15s",
+        color: active ? "#fff" : hover ? "#fff" : "rgba(255,255,255,.72)",
+      }}>
+      <item.icon size={16} /> {item.label}
+    </button>
+  );
+}
+
 function Shell({ T, dark, setDark, logout, title, navItems, view, setView, children }) {
+  const [hoverToggle, setHoverToggle] = useState(false);
+  const [hoverLogout, setHoverLogout] = useState(false);
   return (
     <div style={{ display: "flex", minHeight: 600 }}>
       <div className="no-print" style={{ width: 220, background: T.ink, color: "#fff", padding: "20px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
-        <div className="lg-display" style={{ fontSize: 18, fontWeight: 600, padding: "0 8px 18px" }}>{title}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 8px 18px" }}>
+          <ARLogo T={T} size={32} />
+          <div>
+            <div className="lg-display" style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.1 }}>ARHAM TRADERS</div>
+            <div style={{ fontSize: 10.5, color: "rgba(255,255,255,.5)", marginTop: 2 }}>{title}</div>
+          </div>
+        </div>
         {navItems.map((item) => (
-          <button key={item.key} onClick={() => setView(item.key)}
-            style={{
-              display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 7, border: "none",
-              cursor: "pointer", fontSize: 13.5, fontWeight: 500, textAlign: "left",
-              background: view === item.key ? "rgba(255,255,255,.12)" : "transparent",
-              color: view === item.key ? "#fff" : "rgba(255,255,255,.7)",
-            }}>
-            <item.icon size={16} /> {item.label}
-          </button>
+          <NavButton key={item.key} item={item} active={view === item.key} onClick={() => setView(item.key)} T={T} />
         ))}
         <div style={{ flex: 1 }} />
-        <button onClick={() => setDark(!dark)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, background: "transparent", color: "rgba(255,255,255,.6)" }}>
+        <button onClick={() => setDark(!dark)}
+          onMouseEnter={() => setHoverToggle(true)} onMouseLeave={() => setHoverToggle(false)}
+          style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, background: hoverToggle ? "rgba(255,255,255,.1)" : "transparent", color: "rgba(255,255,255,.6)", transition: "background .15s" }}>
           {dark ? <Sun size={16} /> : <Moon size={16} />} {dark ? "Light mode" : "Dark mode"}
         </button>
-        <button onClick={logout} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13.5, background: "transparent", color: "rgba(255,255,255,.75)" }}>
+        <button onClick={logout}
+          onMouseEnter={() => setHoverLogout(true)} onMouseLeave={() => setHoverLogout(false)}
+          style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13.5, background: hoverLogout ? hexToRgba(T.rule, 0.25) : "transparent", color: "rgba(255,255,255,.75)", transition: "background .15s" }}>
           <LogOut size={16} /> Log out
         </button>
       </div>
-      <div style={{ flex: 1, padding: 24, minWidth: 0 }}>{children}</div>
+      <div style={{ flex: 1, padding: 24, minWidth: 0, position: "relative" }}>
+        <ARWatermark T={T} />
+        <div style={{ position: "relative", zIndex: 1 }}>{children}</div>
+      </div>
     </div>
   );
 }
@@ -495,15 +561,15 @@ function StatCard({ T, label, value, sub, tone }) {
 function AdminShell(props) {
   const { T, dark, setDark, view, setView, logout } = props;
   const navItems = [
-    { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { key: "customers", label: "Customers", icon: Users },
-    { key: "sales", label: "Sales entry", icon: PackagePlus },
-    { key: "payments", label: "Payments", icon: Wallet },
-    { key: "expenses", label: "Expenses", icon: Receipt },
-    { key: "statements", label: "Statements", icon: ScrollText },
-    { key: "cashflow", label: "Cash flow", icon: TrendingUp },
-    { key: "reports", label: "Reports", icon: FileBarChart },
-    { key: "settings", label: "Settings", icon: Settings },
+    { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, color: "#B8912F" },
+    { key: "customers", label: "Customers", icon: Users, color: "#2F6B4F" },
+    { key: "sales", label: "Sales entry", icon: PackagePlus, color: "#3B6EA5" },
+    { key: "payments", label: "Payments", icon: Wallet, color: "#6B4C9A" },
+    { key: "expenses", label: "Expenses", icon: Receipt, color: "#B23A2E" },
+    { key: "statements", label: "Statements", icon: ScrollText, color: "#C1663B" },
+    { key: "cashflow", label: "Cash flow", icon: TrendingUp, color: "#2E8B8B" },
+    { key: "reports", label: "Reports", icon: FileBarChart, color: "#4C5B8A" },
+    { key: "settings", label: "Settings", icon: Settings, color: "#7A7A7A" },
   ];
   return (
     <Shell T={T} dark={dark} setDark={setDark} logout={logout} title="Admin" navItems={navItems} view={view} setView={setView}>
@@ -1107,10 +1173,10 @@ function SettingsPage({ T, db, saveSettings }) {
 function CustomerShell(props) {
   const { T, dark, setDark, view, setView, logout } = props;
   const navItems = [
-    { key: "profile", label: "My profile", icon: Users },
-    { key: "statement", label: "Statement", icon: ScrollText },
-    { key: "purchases", label: "Purchases", icon: PackagePlus },
-    { key: "paymentHistory", label: "Payments", icon: Wallet },
+    { key: "profile", label: "My profile", icon: Users, color: "#B8912F" },
+    { key: "statement", label: "Statement", icon: ScrollText, color: "#2F6B4F" },
+    { key: "purchases", label: "Purchases", icon: PackagePlus, color: "#3B6EA5" },
+    { key: "paymentHistory", label: "Payments", icon: Wallet, color: "#6B4C9A" },
   ];
   return (
     <Shell T={T} dark={dark} setDark={setDark} logout={logout} title="My account" navItems={navItems} view={view} setView={setView}>
