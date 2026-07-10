@@ -441,6 +441,7 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
             <ARLogo T={T} size={52} />
           </div>
           <div className="lg-display" style={{ fontSize: 26, fontWeight: 600, color: T.ink, letterSpacing: 0.5 }}>ARHAM TRADERS</div>
+          <div style={{ fontSize: 12, color: T.slate, marginTop: 6 }}>462/2 Saheen Academy Road, Feni</div>
         </div>
         <div style={{ background: T.paperCard, border: `1px solid ${T.line}`, borderRadius: 12, padding: 24 }}>
           <div style={{ display: "flex", gap: 6, marginBottom: 18, background: T.paper, borderRadius: 8, padding: 4 }}>
@@ -477,6 +478,7 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
 function NavButton({ item, active, onClick, T }) {
   const [hover, setHover] = useState(false);
   const color = item.color || T.gold;
+  const front = item.frontColor || "rgba(255,255,255,.72)";
   const bg = active ? color : hover ? hexToRgba(color, 0.22) : "transparent";
   return (
     <button
@@ -486,8 +488,9 @@ function NavButton({ item, active, onClick, T }) {
       style={{
         display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 7, border: "none",
         cursor: "pointer", fontSize: 13.5, fontWeight: 500, textAlign: "left",
-        background: bg, transition: "background .15s",
-        color: active ? "#fff" : hover ? "#fff" : "rgba(255,255,255,.72)",
+        background: bg, transition: "background .15s, transform .15s",
+        transform: hover && !active ? "scale(1.06)" : "scale(1)", transformOrigin: "left center",
+        color: active ? "#fff" : hover ? "#fff" : front,
       }}>
       <item.icon size={16} /> {item.label}
     </button>
@@ -542,14 +545,21 @@ function PageHeader({ T, title, subtitle, action }) {
   );
 }
 
-function Card({ T, children, style }) {
-  return <div style={{ background: T.paperCard, border: `1px solid ${T.line}`, borderRadius: 12, padding: 18, ...style }}>{children}</div>;
+function Card({ T, children, style, ...rest }) {
+  return <div style={{ background: T.paperCard, border: `1px solid ${T.line}`, borderRadius: 12, padding: 18, ...style }} {...rest}>{children}</div>;
 }
 
-function StatCard({ T, label, value, sub, tone }) {
+function StatCard({ T, label, value, sub, tone, accent }) {
+  const [hover, setHover] = useState(false);
   const color = tone === "danger" ? T.rule : tone === "good" ? T.green : T.ink;
+  const bg = accent ? hexToRgba(accent, hover ? 0.22 : 0.12) : T.paperCard;
   return (
-    <Card T={T} style={{ padding: 14 }}>
+    <Card T={T} style={{
+      padding: 14, background: bg, borderColor: accent ? hexToRgba(accent, 0.35) : T.line,
+      transform: hover ? "scale(1.05)" : "scale(1)", transition: "transform .15s, background .15s",
+      cursor: "default",
+    }}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <div style={{ fontSize: 11.5, color: T.slate, fontWeight: 600, textTransform: "uppercase", letterSpacing: .3 }}>{label}</div>
       <div className="lg-mono" style={{ fontSize: 20, fontWeight: 600, color, marginTop: 6 }}>{value}</div>
       {sub && <div style={{ fontSize: 11.5, color: T.slateLight, marginTop: 3 }}>{sub}</div>}
@@ -561,15 +571,15 @@ function StatCard({ T, label, value, sub, tone }) {
 function AdminShell(props) {
   const { T, dark, setDark, view, setView, logout } = props;
   const navItems = [
-    { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, color: "#B8912F" },
-    { key: "customers", label: "Customers", icon: Users, color: "#2F6B4F" },
-    { key: "sales", label: "Sales entry", icon: PackagePlus, color: "#3B6EA5" },
-    { key: "payments", label: "Payments", icon: Wallet, color: "#6B4C9A" },
-    { key: "expenses", label: "Expenses", icon: Receipt, color: "#B23A2E" },
-    { key: "statements", label: "Statements", icon: ScrollText, color: "#C1663B" },
-    { key: "cashflow", label: "Cash flow", icon: TrendingUp, color: "#2E8B8B" },
-    { key: "reports", label: "Reports", icon: FileBarChart, color: "#4C5B8A" },
-    { key: "settings", label: "Settings", icon: Settings, color: "#7A7A7A" },
+    { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, color: "#B8912F", frontColor: "#5FBFB0" },
+    { key: "customers", label: "Customers", icon: Users, color: "#2F6B4F", frontColor: "#E0A458" },
+    { key: "sales", label: "Sales entry", icon: PackagePlus, color: "#3B6EA5", frontColor: "#E08B76" },
+    { key: "payments", label: "Payments", icon: Wallet, color: "#6B4C9A", frontColor: "#8FCF8F" },
+    { key: "expenses", label: "Expenses", icon: Receipt, color: "#B23A2E", frontColor: "#8FC1E8" },
+    { key: "statements", label: "Statements", icon: ScrollText, color: "#C1663B", frontColor: "#7FC2CB" },
+    { key: "cashflow", label: "Cash flow", icon: TrendingUp, color: "#2E8B8B", frontColor: "#E29BD1" },
+    { key: "reports", label: "Reports", icon: FileBarChart, color: "#4C5B8A", frontColor: "#F0C96B" },
+    { key: "settings", label: "Settings", icon: Settings, color: "#7A7A7A", frontColor: "#A8E6D9" },
   ];
   return (
     <Shell T={T} dark={dark} setDark={setDark} logout={logout} title="Admin" navItems={navItems} view={view} setView={setView}>
@@ -588,16 +598,16 @@ function AdminShell(props) {
 
 function AdminDashboard({ T, db, totals, monthlyChartData, cashFlowSeries, topCustomers, outstandingCustomers }) {
   const cards = [
-    { label: "Total customers", value: db.customers.length, tone: "" },
-    { label: "Total sales", value: fmtMoney(totals.totalSales), tone: "" },
-    { label: "Total collections", value: fmtMoney(totals.totalCollections), tone: "good" },
-    { label: "Total outstanding", value: fmtMoney(totals.totalOutstanding), tone: "danger" },
-    { label: "Today's sales", value: fmtMoney(totals.todaySales), tone: "" },
-    { label: "Today's collections", value: fmtMoney(totals.todayCollections), tone: "good" },
-    { label: "Today's expenses", value: fmtMoney(totals.todayExpenses), tone: "danger" },
-    { label: "Cash in hand", value: fmtMoney(totals.cashInHand), tone: "" },
-    { label: "Net cash flow", value: fmtMoney(totals.netCashFlow), tone: totals.netCashFlow >= 0 ? "good" : "danger" },
-    { label: "Monthly profit / loss", value: fmtMoney(totals.monthProfit), tone: totals.monthProfit >= 0 ? "good" : "danger" },
+    { label: "Total customers", value: db.customers.length, tone: "", accent: "#B8912F" },
+    { label: "Total sales", value: fmtMoney(totals.totalSales), tone: "", accent: "#3B6EA5" },
+    { label: "Total collections", value: fmtMoney(totals.totalCollections), tone: "good", accent: "#2F6B4F" },
+    { label: "Total outstanding", value: fmtMoney(totals.totalOutstanding), tone: "danger", accent: "#B23A2E" },
+    { label: "Today's sales", value: fmtMoney(totals.todaySales), tone: "", accent: "#6B4C9A" },
+    { label: "Today's collections", value: fmtMoney(totals.todayCollections), tone: "good", accent: "#2E8B8B" },
+    { label: "Today's expenses", value: fmtMoney(totals.todayExpenses), tone: "danger", accent: "#C1663B" },
+    { label: "Cash in hand", value: fmtMoney(totals.cashInHand), tone: "", accent: "#4C5B8A" },
+    { label: "Net cash flow", value: fmtMoney(totals.netCashFlow), tone: totals.netCashFlow >= 0 ? "good" : "danger", accent: "#A34C6B" },
+    { label: "Monthly profit / loss", value: fmtMoney(totals.monthProfit), tone: totals.monthProfit >= 0 ? "good" : "danger", accent: "#1F7A5C" },
   ];
   return (
     <div>
@@ -1173,10 +1183,10 @@ function SettingsPage({ T, db, saveSettings }) {
 function CustomerShell(props) {
   const { T, dark, setDark, view, setView, logout } = props;
   const navItems = [
-    { key: "profile", label: "My profile", icon: Users, color: "#B8912F" },
-    { key: "statement", label: "Statement", icon: ScrollText, color: "#2F6B4F" },
-    { key: "purchases", label: "Purchases", icon: PackagePlus, color: "#3B6EA5" },
-    { key: "paymentHistory", label: "Payments", icon: Wallet, color: "#6B4C9A" },
+    { key: "profile", label: "My profile", icon: Users, color: "#B8912F", frontColor: "#5FBFB0" },
+    { key: "statement", label: "Statement", icon: ScrollText, color: "#2F6B4F", frontColor: "#E0A458" },
+    { key: "purchases", label: "Purchases", icon: PackagePlus, color: "#3B6EA5", frontColor: "#E08B76" },
+    { key: "paymentHistory", label: "Payments", icon: Wallet, color: "#6B4C9A", frontColor: "#8FCF8F" },
   ];
   return (
     <Shell T={T} dark={dark} setDark={setDark} logout={logout} title="My account" navItems={navItems} view={view} setView={setView}>
