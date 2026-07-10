@@ -351,7 +351,7 @@ export default function App() {
     <div style={{
       fontFamily: "'Inter', sans-serif",
       backgroundColor: "#0E1A28",
-      backgroundImage: `linear-gradient(rgba(10,18,28,${dark ? 0.72 : 0.55}), rgba(10,18,28,${dark ? 0.8 : 0.6})), url('/arham-bg.jpg')`,
+      backgroundImage: `linear-gradient(rgba(10,18,28,${dark ? 0.72 : 0.42}), rgba(10,18,28,${dark ? 0.8 : 0.48})), url('/arham-bg.jpg')`,
       backgroundSize: "cover",
       backgroundPosition: "center",
       backgroundAttachment: "fixed",
@@ -561,7 +561,7 @@ function Shell({ T, dark, setDark, logout, title, navItems, view, setView, child
 
         <div style={{
           margin: 10, padding: 16, borderRadius: 14,
-          background: hexToRgba(T.paper, 0.92), backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+          background: hexToRgba(T.paper, 0.72), backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)",
         }}>
           {children}
         </div>
@@ -576,7 +576,7 @@ function Shell({ T, dark, setDark, logout, title, navItems, view, setView, child
       </div>
       <div style={{
         flex: 1, minWidth: 0, padding: 24,
-        background: hexToRgba(T.paper, 0.92), backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+        background: hexToRgba(T.paper, 0.72), backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)",
       }}>
         {children}
       </div>
