@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, PackagePlus, Wallet, Receipt, ScrollText,
   TrendingUp, FileBarChart, Settings, LogOut, Plus, Search, Pencil,
   Trash2, X, Printer, Download, Sun, Moon, ChevronLeft, ArrowUpRight,
-  ArrowDownRight, CircleDollarSign, ShieldCheck,
+  ArrowDownRight, CircleDollarSign, ShieldCheck, Menu,
 } from "lucide-react";
 
 const DB_KEY = "ledger_db_v1";
@@ -94,7 +94,7 @@ function ARWatermark({ T }) {
       display: "flex", alignItems: "center", justifyContent: "center", zIndex: 0,
     }}>
       <div className="lg-display" style={{
-        fontSize: 320, fontWeight: 700, color: T.ink, opacity: 0.035,
+        fontSize: "clamp(110px, 32vw, 320px)", fontWeight: 700, color: T.ink, opacity: 0.035,
         userSelect: "none", whiteSpace: "nowrap", transform: "rotate(-8deg)",
       }}>
         AR
@@ -368,7 +368,7 @@ export default function App() {
   }
 
   return (
-    <div style={{ fontFamily: "'Inter', sans-serif", background: T.paper, minHeight: 600, color: T.ink, transition: "background .2s" }}>
+    <div style={{ fontFamily: "'Inter', sans-serif", background: T.paper, minHeight: 600, color: T.ink, transition: "background .2s", overflowX: "hidden" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
         .lg-mono { font-family: 'IBM Plex Mono', monospace; }
@@ -497,33 +497,91 @@ function NavButton({ item, active, onClick, T }) {
   );
 }
 
-function Shell({ T, dark, setDark, logout, title, navItems, view, setView, children }) {
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(typeof window !== "undefined" ? window.innerWidth <= 820 : false);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 820);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return isMobile;
+}
+
+function SidebarInner({ T, dark, setDark, logout, title, navItems, view, setView, onNavigate }) {
   const [hoverToggle, setHoverToggle] = useState(false);
   const [hoverLogout, setHoverLogout] = useState(false);
   return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 8px 18px" }}>
+        <ARLogo T={T} size={32} />
+        <div>
+          <div className="lg-display" style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.1 }}>ARHAM TRADERS</div>
+          <div style={{ fontSize: 10.5, color: "rgba(255,255,255,.5)", marginTop: 2 }}>{title}</div>
+        </div>
+      </div>
+      {navItems.map((item) => (
+        <NavButton key={item.key} item={item} active={view === item.key} onClick={() => { setView(item.key); onNavigate && onNavigate(); }} T={T} />
+      ))}
+      <div style={{ flex: 1 }} />
+      <button onClick={() => setDark(!dark)}
+        onMouseEnter={() => setHoverToggle(true)} onMouseLeave={() => setHoverToggle(false)}
+        style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, background: hoverToggle ? "rgba(255,255,255,.1)" : "transparent", color: "rgba(255,255,255,.6)", transition: "background .15s" }}>
+        {dark ? <Sun size={16} /> : <Moon size={16} />} {dark ? "Light mode" : "Dark mode"}
+      </button>
+      <button onClick={logout}
+        onMouseEnter={() => setHoverLogout(true)} onMouseLeave={() => setHoverLogout(false)}
+        style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13.5, background: hoverLogout ? hexToRgba(T.rule, 0.25) : "transparent", color: "rgba(255,255,255,.75)", transition: "background .15s" }}>
+        <LogOut size={16} /> Log out
+      </button>
+    </>
+  );
+}
+
+function Shell({ T, dark, setDark, logout, title, navItems, view, setView, children }) {
+  const isMobile = useIsMobile();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  if (isMobile) {
+    return (
+      <div style={{ minHeight: 600 }}>
+        <div className="no-print" style={{
+          position: "sticky", top: 0, zIndex: 30, background: T.ink, color: "#fff",
+          display: "flex", alignItems: "center", gap: 10, padding: "12px 14px",
+        }}>
+          <button onClick={() => setDrawerOpen(true)} style={{ background: "transparent", border: "none", color: "#fff", cursor: "pointer", padding: 4 }}>
+            <Menu size={22} />
+          </button>
+          <ARLogo T={T} size={28} />
+          <div className="lg-display" style={{ fontSize: 14, fontWeight: 600 }}>ARHAM TRADERS</div>
+        </div>
+
+        {drawerOpen && (
+          <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex" }}>
+            <div onClick={() => setDrawerOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.45)" }} />
+            <div style={{
+              position: "relative", width: 240, maxWidth: "82vw", background: T.ink, color: "#fff",
+              padding: "16px 12px", display: "flex", flexDirection: "column", gap: 4, height: "100%", overflowY: "auto",
+            }}>
+              <button onClick={() => setDrawerOpen(false)} style={{ alignSelf: "flex-end", background: "transparent", border: "none", color: "#fff", cursor: "pointer", marginBottom: 6 }}>
+                <X size={20} />
+              </button>
+              <SidebarInner T={T} dark={dark} setDark={setDark} logout={logout} title={title} navItems={navItems} view={view} setView={setView} onNavigate={() => setDrawerOpen(false)} />
+            </div>
+          </div>
+        )}
+
+        <div style={{ padding: 16, position: "relative" }}>
+          <ARWatermark T={T} />
+          <div style={{ position: "relative", zIndex: 1 }}>{children}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
     <div style={{ display: "flex", minHeight: 600 }}>
       <div className="no-print" style={{ width: 220, background: T.ink, color: "#fff", padding: "20px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 8px 18px" }}>
-          <ARLogo T={T} size={32} />
-          <div>
-            <div className="lg-display" style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.1 }}>ARHAM TRADERS</div>
-            <div style={{ fontSize: 10.5, color: "rgba(255,255,255,.5)", marginTop: 2 }}>{title}</div>
-          </div>
-        </div>
-        {navItems.map((item) => (
-          <NavButton key={item.key} item={item} active={view === item.key} onClick={() => setView(item.key)} T={T} />
-        ))}
-        <div style={{ flex: 1 }} />
-        <button onClick={() => setDark(!dark)}
-          onMouseEnter={() => setHoverToggle(true)} onMouseLeave={() => setHoverToggle(false)}
-          style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, background: hoverToggle ? "rgba(255,255,255,.1)" : "transparent", color: "rgba(255,255,255,.6)", transition: "background .15s" }}>
-          {dark ? <Sun size={16} /> : <Moon size={16} />} {dark ? "Light mode" : "Dark mode"}
-        </button>
-        <button onClick={logout}
-          onMouseEnter={() => setHoverLogout(true)} onMouseLeave={() => setHoverLogout(false)}
-          style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13.5, background: hoverLogout ? hexToRgba(T.rule, 0.25) : "transparent", color: "rgba(255,255,255,.75)", transition: "background .15s" }}>
-          <LogOut size={16} /> Log out
-        </button>
+        <SidebarInner T={T} dark={dark} setDark={setDark} logout={logout} title={title} navItems={navItems} view={view} setView={setView} />
       </div>
       <div style={{ flex: 1, padding: 24, minWidth: 0, position: "relative" }}>
         <ARWatermark T={T} />
