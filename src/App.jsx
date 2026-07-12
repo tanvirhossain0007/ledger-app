@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, PackagePlus, Wallet, Receipt, ScrollText,
   TrendingUp, FileBarChart, Settings, LogOut, Plus, Search, Pencil,
   Trash2, X, Printer, Download, Sun, Moon, ChevronLeft, ArrowUpRight,
-  ArrowDownRight, CircleDollarSign, ShieldCheck, Menu,
+  ArrowDownRight, CircleDollarSign, ShieldCheck, Menu, Building2, Truck, CreditCard, Banknote,
 } from "lucide-react";
 
 const DB_KEY = "ledger_db_v1";
@@ -92,7 +92,10 @@ const emptyDB = () => ({
   sales: [],
   payments: [],
   expenses: [],
-  settings: { companyName: "Amber Trading Co.", openingCash: 50000, invoiceSeq: 1 },
+  suppliers: [],
+  purchases: [],
+  supplierPayments: [],
+  settings: { companyName: "Amber Trading Co.", openingCash: 50000, invoiceSeq: 1, purchaseInvoiceSeq: 1 },
 });
 
 function downloadCSV(filename, rows) {
@@ -171,26 +174,41 @@ export default function App() {
     [db]
   );
 
+  const supplierBalance = useCallback(
+    (supId) => {
+      const sup = db.suppliers.find((s) => s.id === supId);
+      if (!sup) return 0;
+      const bought = db.purchases.filter((p) => p.supplierId === supId).reduce((a, p) => a + Number(p.total), 0);
+      const paid = db.supplierPayments.filter((p) => p.supplierId === supId).reduce((a, p) => a + Number(p.amount), 0);
+      return Number(sup.openingBalance || 0) + bought - paid;
+    },
+    [db]
+  );
+
   const totals = useMemo(() => {
     const totalSales = db.sales.reduce((a, s) => a + Number(s.total), 0);
     const totalCollections = db.payments.reduce((a, p) => a + Number(p.amount), 0);
     const totalExpenses = db.expenses.reduce((a, e) => a + Number(e.amount), 0);
     const totalOutstanding = db.customers.reduce((a, c) => a + customerBalance(c.id), 0);
+    const totalPurchases = db.purchases.reduce((a, p) => a + Number(p.total), 0);
+    const totalSupplierPayments = db.supplierPayments.reduce((a, p) => a + Number(p.amount), 0);
+    const totalPayable = db.suppliers.reduce((a, s) => a + supplierBalance(s.id), 0);
     const today = todayISO();
     const todaySales = db.sales.filter((s) => s.date === today).reduce((a, s) => a + Number(s.total), 0);
     const todayCollections = db.payments.filter((p) => p.date === today).reduce((a, p) => a + Number(p.amount), 0);
     const todayExpenses = db.expenses.filter((e) => e.date === today).reduce((a, e) => a + Number(e.amount), 0);
-    const cashInHand = Number(db.settings.openingCash || 0) + totalCollections - totalExpenses;
-    const netCashFlow = totalCollections - totalExpenses;
+    const cashInHand = Number(db.settings.openingCash || 0) + totalCollections - totalExpenses - totalSupplierPayments;
+    const netCashFlow = totalCollections - totalExpenses - totalSupplierPayments;
     const thisMonth = today.slice(0, 7);
     const monthSales = db.sales.filter((s) => monthKey(s.date) === thisMonth).reduce((a, s) => a + Number(s.total), 0);
     const monthExpenses = db.expenses.filter((e) => monthKey(e.date) === thisMonth).reduce((a, e) => a + Number(e.amount), 0);
     return {
       totalSales, totalCollections, totalExpenses, totalOutstanding,
+      totalPurchases, totalSupplierPayments, totalPayable,
       todaySales, todayCollections, todayExpenses, cashInHand, netCashFlow,
       monthProfit: monthSales - monthExpenses,
     };
-  }, [db, customerBalance]);
+  }, [db, customerBalance, supplierBalance]);
 
   const monthlyChartData = useMemo(() => {
     const map = {};
@@ -210,11 +228,13 @@ export default function App() {
     const dates = new Set();
     db.payments.forEach((p) => dates.add(p.date));
     db.expenses.forEach((e) => dates.add(e.date));
+    db.supplierPayments.forEach((p) => dates.add(p.date));
     const sorted = Array.from(dates).sort();
     let bal = Number(db.settings.openingCash || 0);
     return sorted.map((d) => {
       const inAmt = db.payments.filter((p) => p.date === d).reduce((a, p) => a + Number(p.amount), 0);
-      const outAmt = db.expenses.filter((e) => e.date === d).reduce((a, e) => a + Number(e.amount), 0);
+      const outAmt = db.expenses.filter((e) => e.date === d).reduce((a, e) => a + Number(e.amount), 0)
+        + db.supplierPayments.filter((p) => p.date === d).reduce((a, p) => a + Number(p.amount), 0);
       bal = bal + inAmt - outAmt;
       return { date: fmtDateDMY(d), in: inAmt, out: outAmt, balance: bal };
     });
@@ -257,15 +277,22 @@ export default function App() {
   const saveSale = (data) => {
     updateDb((prev) => {
       const exists = prev.sales.some((s) => s.id === data.id);
-      let sales, settings = prev.settings;
+      let sales, settings = prev.settings, payments = prev.payments;
+      const cashNow = Number(data.cashReceived || 0);
       if (exists) {
         sales = prev.sales.map((s) => (s.id === data.id ? data : s));
       } else {
         const invoiceNo = nextInvoiceNo();
         sales = [...prev.sales, { ...data, id: uid("SAL"), invoiceNo }];
         settings = { ...prev.settings, invoiceSeq: prev.settings.invoiceSeq + 1 };
+        if (cashNow > 0) {
+          payments = [...prev.payments, {
+            id: uid("PAY"), date: data.date, customerId: data.customerId, amount: cashNow,
+            method: "Cash", reference: invoiceNo, remarks: "Cash received at sale",
+          }];
+        }
       }
-      return { ...prev, sales, settings };
+      return { ...prev, sales, payments, settings };
     });
     notify("Sale recorded — statement and due balance updated");
   };
@@ -305,6 +332,61 @@ export default function App() {
   const deleteExpense = (id) => {
     updateDb((prev) => ({ ...prev, expenses: prev.expenses.filter((e) => e.id !== id) }));
     notify("Expense removed", "danger");
+  };
+
+  const nextPurchaseInvoiceNo = () => `PUR-${String(db.settings.purchaseInvoiceSeq).padStart(4, "0")}`;
+
+  const saveSupplier = (data) => {
+    updateDb((prev) => {
+      const exists = prev.suppliers.some((s) => s.id === data.id);
+      const suppliers = exists
+        ? prev.suppliers.map((s) => (s.id === data.id ? data : s))
+        : [...prev.suppliers, { ...data, id: uid("SUP") }];
+      return { ...prev, suppliers };
+    });
+    notify("Supplier saved");
+  };
+
+  const deleteSupplier = (id) => {
+    updateDb((prev) => ({ ...prev, suppliers: prev.suppliers.filter((s) => s.id !== id) }));
+    notify("Supplier deleted", "danger");
+  };
+
+  const savePurchase = (data) => {
+    updateDb((prev) => {
+      const exists = prev.purchases.some((p) => p.id === data.id);
+      let purchases, settings = prev.settings;
+      if (exists) {
+        purchases = prev.purchases.map((p) => (p.id === data.id ? data : p));
+      } else {
+        const invoiceNo = nextPurchaseInvoiceNo();
+        purchases = [...prev.purchases, { ...data, id: uid("PUR"), invoiceNo }];
+        settings = { ...prev.settings, purchaseInvoiceSeq: prev.settings.purchaseInvoiceSeq + 1 };
+      }
+      return { ...prev, purchases, settings };
+    });
+    notify("Purchase recorded — accounts payable updated");
+  };
+
+  const deletePurchase = (id) => {
+    updateDb((prev) => ({ ...prev, purchases: prev.purchases.filter((p) => p.id !== id) }));
+    notify("Purchase entry removed", "danger");
+  };
+
+  const saveSupplierPayment = (data) => {
+    updateDb((prev) => {
+      const exists = prev.supplierPayments.some((p) => p.id === data.id);
+      const supplierPayments = exists
+        ? prev.supplierPayments.map((p) => (p.id === data.id ? data : p))
+        : [...prev.supplierPayments, { ...data, id: uid("SPAY") }];
+      return { ...prev, supplierPayments };
+    });
+    notify("Payment to supplier recorded — payable and cash flow updated");
+  };
+
+  const deleteSupplierPayment = (id) => {
+    updateDb((prev) => ({ ...prev, supplierPayments: prev.supplierPayments.filter((p) => p.id !== id) }));
+    notify("Supplier payment removed", "danger");
   };
 
   const saveSettings = (data) => {
@@ -383,10 +465,14 @@ export default function App() {
           db={db} totals={totals} monthlyChartData={monthlyChartData} cashFlowSeries={cashFlowSeries}
           topCustomers={topCustomers} outstandingCustomers={outstandingCustomers}
           customerBalance={customerBalance} nextInvoiceNo={nextInvoiceNo}
+          supplierBalance={supplierBalance} nextPurchaseInvoiceNo={nextPurchaseInvoiceNo}
           saveCustomer={saveCustomer} deleteCustomer={deleteCustomer}
           saveSale={saveSale} deleteSale={deleteSale}
           savePayment={savePayment} deletePayment={deletePayment}
           saveExpense={saveExpense} deleteExpense={deleteExpense}
+          saveSupplier={saveSupplier} deleteSupplier={deleteSupplier}
+          savePurchase={savePurchase} deletePurchase={deletePurchase}
+          saveSupplierPayment={saveSupplierPayment} deleteSupplierPayment={deleteSupplierPayment}
           saveSettings={saveSettings}
         />
       ) : (
@@ -625,7 +711,10 @@ function AdminShell(props) {
     { key: "dashboard", label: "Dashboard", icon: LayoutDashboard, color: "#B8912F", frontColor: "#5FBFB0" },
     { key: "customers", label: "Customers", icon: Users, color: "#2F6B4F", frontColor: "#E0A458" },
     { key: "sales", label: "Sales entry", icon: PackagePlus, color: "#3B6EA5", frontColor: "#E08B76" },
-    { key: "payments", label: "Payments", icon: Wallet, color: "#6B4C9A", frontColor: "#8FCF8F" },
+    { key: "payments", label: "Cash Receiving", icon: Banknote, color: "#6B4C9A", frontColor: "#8FCF8F" },
+    { key: "suppliers", label: "Suppliers", icon: Truck, color: "#8A5A2B", frontColor: "#8AD6C9" },
+    { key: "purchases", label: "Purchase entry", icon: Building2, color: "#3B6EA5", frontColor: "#E0B463" },
+    { key: "supplierPayments", label: "Payments", icon: CreditCard, color: "#A34C6B", frontColor: "#7FD1E0" },
     { key: "expenses", label: "Expenses", icon: Receipt, color: "#B23A2E", frontColor: "#8FC1E8" },
     { key: "statements", label: "Statements", icon: ScrollText, color: "#C1663B", frontColor: "#7FC2CB" },
     { key: "cashflow", label: "Cash flow", icon: TrendingUp, color: "#2E8B8B", frontColor: "#E29BD1" },
@@ -638,6 +727,9 @@ function AdminShell(props) {
       {view === "customers" && <CustomersPage {...props} />}
       {view === "sales" && <SalesPage {...props} />}
       {view === "payments" && <PaymentsPage {...props} />}
+      {view === "suppliers" && <SuppliersPage {...props} />}
+      {view === "purchases" && <PurchasesPage {...props} />}
+      {view === "supplierPayments" && <SupplierPaymentsPage {...props} />}
       {view === "expenses" && <ExpensesPage {...props} />}
       {view === "statements" && <StatementsPage {...props} />}
       {view === "cashflow" && <CashFlowPage {...props} />}
@@ -659,6 +751,7 @@ function AdminDashboard({ T, db, totals, monthlyChartData, cashFlowSeries, topCu
     { label: "Cash in hand", value: fmtMoney(totals.cashInHand), tone: "", accent: "#4C5B8A" },
     { label: "Net cash flow", value: fmtMoney(totals.netCashFlow), tone: totals.netCashFlow >= 0 ? "good" : "danger", accent: "#A34C6B" },
     { label: "Monthly profit / loss", value: fmtMoney(totals.monthProfit), tone: totals.monthProfit >= 0 ? "good" : "danger", accent: "#1F7A5C" },
+    { label: "Accounts payable", value: fmtMoney(totals.totalPayable), tone: totals.totalPayable > 0 ? "danger" : "", accent: "#8A5A2B" },
   ];
   return (
     <div>
@@ -860,8 +953,11 @@ function SaleModal({ T, db, initial, nextInvoiceNo, onClose, onSave }) {
     id: initial.id, date: initial.date || todayISO(), customerId: initial.customerId || (db.customers[0]?.id || ""),
     productName: initial.productName || "", description: initial.description || "", qty: initial.qty || 1,
     unit: initial.unit || "pcs", unitPrice: initial.unitPrice || 0, remarks: initial.remarks || "",
+    cashReceived: initial.cashReceived || 0,
   });
   const total = (Number(f.qty) || 0) * (Number(f.unitPrice) || 0);
+  const cashReceived = Math.min(Number(f.cashReceived) || 0, total);
+  const balanceDue = Math.max(total - cashReceived, 0);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   return (
     <ModalShell T={T} title={initial.id ? "Edit sale" : "New sale entry"} onClose={onClose}>
@@ -886,9 +982,20 @@ function SaleModal({ T, db, initial, nextInvoiceNo, onClose, onSave }) {
         <span style={{ fontSize: 13, color: T.slate }}>Total amount</span>
         <span className="lg-mono" style={{ fontSize: 18, fontWeight: 600 }}>{fmtMoney(total)}</span>
       </div>
+      {!initial.id && (
+        <Field T={T} label="Cash received now (leave 0 if fully on credit)">
+          <input className="lg-input" type="number" value={f.cashReceived} onChange={set("cashReceived")} placeholder="0" />
+        </Field>
+      )}
+      {!initial.id && (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "6px 0 12px", padding: "8px 10px", background: hexToRgba(balanceDue > 0 ? T.rule : T.green, 0.1), borderRadius: 8 }}>
+          <span style={{ fontSize: 12.5, color: T.slate }}>{balanceDue > 0 ? "Remaining balance (added to due)" : "Fully paid — balance will be zero"}</span>
+          <span className="lg-mono" style={{ fontSize: 15, fontWeight: 600, color: balanceDue > 0 ? T.rule : T.green }}>{fmtMoney(balanceDue)}</span>
+        </div>
+      )}
       <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center" }}
         disabled={!f.customerId || !f.productName}
-        onClick={() => onSave({ ...f, qty: Number(f.qty), unitPrice: Number(f.unitPrice), total })}>Save sale</button>
+        onClick={() => onSave({ ...f, qty: Number(f.qty), unitPrice: Number(f.unitPrice), total, cashReceived: initial.id ? undefined : cashReceived })}>Save sale</button>
     </ModalShell>
   );
 }
@@ -899,7 +1006,7 @@ function PaymentsPage({ T, db, savePayment, deletePayment }) {
   const rows = [...db.payments].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   return (
     <div>
-      <PageHeader T={T} title="Customer payments" subtitle="Recording a payment reduces the due balance and increases cash in hand"
+      <PageHeader T={T} title="Cash receiving" subtitle="Record any money received from a customer — downpayment, full payment, or an installment. This reduces the due balance and increases cash in hand"
         action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> New payment</button>} />
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
@@ -1030,6 +1137,229 @@ function ExpenseModal({ T, initial, onClose, onSave }) {
       <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
         disabled={!f.amount}
         onClick={() => onSave({ ...f, amount: Number(f.amount) })}>Save expense</button>
+    </ModalShell>
+  );
+}
+
+// ================= SUPPLIERS / PURCHASES / SUPPLIER PAYMENTS =================
+function SuppliersPage({ T, db, saveSupplier, deleteSupplier, supplierBalance }) {
+  const [q, setQ] = useState("");
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const filtered = db.suppliers.filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase()) || (s.mobile || "").includes(q));
+  return (
+    <div>
+      <PageHeader T={T} title="Suppliers" subtitle={`${db.suppliers.length} total — businesses you buy stock from`}
+        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add supplier</button>} />
+      <div style={{ position: "relative", maxWidth: 300, marginBottom: 14 }}>
+        <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+        <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search name or mobile" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>ID</th><th>Name</th><th>Mobile</th><th>Company</th><th>Status</th><th>Payable</th><th></th></tr></thead>
+          <tbody>
+            {filtered.map((s) => {
+              const bal = supplierBalance(s.id);
+              return (
+                <tr key={s.id}>
+                  <td className="lg-mono" style={{ fontSize: 11.5, color: T.slate }}>{s.id}</td>
+                  <td style={{ fontWeight: 500 }}>{s.name}</td>
+                  <td className="lg-mono">{s.mobile}</td>
+                  <td>{s.company || "—"}</td>
+                  <td><span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: s.status === "Active" ? T.greenBg : T.dangerBg, color: s.status === "Active" ? T.green : T.rule, fontWeight: 600 }}>{s.status}</span></td>
+                  <td className="lg-mono" style={{ color: bal > 0 ? T.rule : T.green, fontWeight: 600 }}>{fmtMoney(bal)}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setModal(s)} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                    <button onClick={() => setConfirmDel(s)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!filtered.length && <tr><td colSpan={7} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No suppliers added yet.</td></tr>}
+          </tbody>
+        </table>
+      </Card>
+      {modal && <SupplierModal T={T} initial={modal} onClose={() => setModal(null)} onSave={(d) => { saveSupplier(d); setModal(null); }} />}
+      {confirmDel && <ConfirmModal T={T} title="Delete supplier?" message={`This removes ${confirmDel.name} and cannot be undone.`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteSupplier(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function SupplierModal({ T, initial, onClose, onSave }) {
+  const [f, setF] = useState({
+    id: initial.id, name: initial.name || "", mobile: initial.mobile || "", email: initial.email || "",
+    address: initial.address || "", company: initial.company || "", openingBalance: initial.openingBalance || 0,
+    status: initial.status || "Active",
+  });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <ModalShell T={T} title={initial.id ? "Edit supplier" : "Add supplier"} onClose={onClose}>
+      <Field T={T} label="Supplier / company name"><input className="lg-input" value={f.name} onChange={set("name")} /></Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Mobile number"><input className="lg-input" value={f.mobile} onChange={set("mobile")} /></Field>
+        <Field T={T} label="Email"><input className="lg-input" value={f.email} onChange={set("email")} /></Field>
+      </div>
+      <Field T={T} label="Address"><input className="lg-input" value={f.address} onChange={set("address")} /></Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Company (optional)"><input className="lg-input" value={f.company} onChange={set("company")} /></Field>
+        <Field T={T} label="Opening balance (amount you already owe)"><input className="lg-input" type="number" value={f.openingBalance} onChange={set("openingBalance")} /></Field>
+      </div>
+      <Field T={T} label="Status">
+        <select className="lg-input" value={f.status} onChange={set("status")}><option>Active</option><option>Inactive</option></select>
+      </Field>
+      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        onClick={() => f.name && onSave(f)}>Save supplier</button>
+    </ModalShell>
+  );
+}
+
+function PurchasesPage({ T, db, savePurchase, deletePurchase, nextPurchaseInvoiceNo }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const rows = [...db.purchases].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return (
+    <div>
+      <PageHeader T={T} title="Purchase entry" subtitle="Stock bought from a supplier — this increases accounts payable (money you owe them)"
+        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.suppliers.length}><Plus size={14} /> New purchase</button>} />
+      {!db.suppliers.length && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a supplier first before recording a purchase.</div>}
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Invoice</th><th>Date</th><th>Supplier</th><th>Product</th><th>Qty</th><th>Unit price</th><th>Total</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((p) => {
+              const sup = db.suppliers.find((s) => s.id === p.supplierId);
+              return (
+                <tr key={p.id}>
+                  <td className="lg-mono">{p.invoiceNo}</td>
+                  <td className="lg-mono">{fmtDateDMY(p.date)}</td>
+                  <td>{sup ? sup.name : "—"}</td>
+                  <td>{p.productName}</td>
+                  <td className="lg-mono">{p.qty} {p.unit}</td>
+                  <td className="lg-mono">{fmtMoney(p.unitPrice)}</td>
+                  <td className="lg-mono" style={{ fontWeight: 600 }}>{fmtMoney(p.total)}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setModal(p)} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                    <button onClick={() => setConfirmDel(p)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && <tr><td colSpan={8} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No purchases recorded yet.</td></tr>}
+          </tbody>
+        </table>
+      </Card>
+      {modal && <PurchaseModal T={T} db={db} initial={modal} nextPurchaseInvoiceNo={nextPurchaseInvoiceNo} onClose={() => setModal(null)} onSave={(d) => { savePurchase(d); setModal(null); }} />}
+      {confirmDel && <ConfirmModal T={T} title="Delete purchase?" message="This will reduce the amount owed to this supplier." onCancel={() => setConfirmDel(null)} onConfirm={() => { deletePurchase(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function PurchaseModal({ T, db, initial, nextPurchaseInvoiceNo, onClose, onSave }) {
+  const [f, setF] = useState({
+    id: initial.id, date: initial.date || todayISO(), supplierId: initial.supplierId || (db.suppliers[0]?.id || ""),
+    productName: initial.productName || "", description: initial.description || "", qty: initial.qty || 1,
+    unit: initial.unit || "pcs", unitPrice: initial.unitPrice || 0, remarks: initial.remarks || "",
+  });
+  const total = (Number(f.qty) || 0) * (Number(f.unitPrice) || 0);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <ModalShell T={T} title={initial.id ? "Edit purchase" : "New purchase entry"} onClose={onClose}>
+      <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 8 }}>Invoice: <span className="lg-mono">{initial.invoiceNo || nextPurchaseInvoiceNo()}</span></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Date"><input className="lg-input" type="date" value={f.date} onChange={set("date")} /></Field>
+        <Field T={T} label="Supplier">
+          <select className="lg-input" value={f.supplierId} onChange={set("supplierId")}>
+            {db.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field T={T} label="Product name"><input className="lg-input" value={f.productName} onChange={set("productName")} /></Field>
+      <Field T={T} label="Description"><input className="lg-input" value={f.description} onChange={set("description")} /></Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Quantity"><input className="lg-input" type="number" value={f.qty} onChange={set("qty")} /></Field>
+        <Field T={T} label="Unit"><input className="lg-input" value={f.unit} onChange={set("unit")} /></Field>
+        <Field T={T} label="Unit price"><input className="lg-input" type="number" value={f.unitPrice} onChange={set("unitPrice")} /></Field>
+      </div>
+      <Field T={T} label="Remarks"><input className="lg-input" value={f.remarks} onChange={set("remarks")} /></Field>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0" }}>
+        <span style={{ fontSize: 13, color: T.slate }}>Total amount</span>
+        <span className="lg-mono" style={{ fontSize: 18, fontWeight: 600 }}>{fmtMoney(total)}</span>
+      </div>
+      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center" }}
+        disabled={!f.supplierId || !f.productName}
+        onClick={() => onSave({ ...f, qty: Number(f.qty), unitPrice: Number(f.unitPrice), total })}>Save purchase</button>
+    </ModalShell>
+  );
+}
+
+function SupplierPaymentsPage({ T, db, saveSupplierPayment, deleteSupplierPayment }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const rows = [...db.supplierPayments].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return (
+    <div>
+      <PageHeader T={T} title="Payments to suppliers" subtitle="Money you pay out to a supplier — this reduces accounts payable and cash in hand"
+        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.suppliers.length}><Plus size={14} /> New payment</button>} />
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Date</th><th>Supplier</th><th>Amount</th><th>Method</th><th>Reference</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((p) => {
+              const sup = db.suppliers.find((s) => s.id === p.supplierId);
+              return (
+                <tr key={p.id}>
+                  <td className="lg-mono">{fmtDateDMY(p.date)}</td>
+                  <td>{sup ? sup.name : "—"}</td>
+                  <td className="lg-mono" style={{ color: T.rule, fontWeight: 600 }}>{fmtMoney(p.amount)}</td>
+                  <td>{p.method}</td>
+                  <td className="lg-mono">{p.reference || "—"}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setModal(p)} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                    <button onClick={() => setConfirmDel(p)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && <tr><td colSpan={6} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No payments to suppliers recorded yet.</td></tr>}
+          </tbody>
+        </table>
+      </Card>
+      {modal && <SupplierPaymentModal T={T} db={db} initial={modal} onClose={() => setModal(null)} onSave={(d) => { saveSupplierPayment(d); setModal(null); }} />}
+      {confirmDel && <ConfirmModal T={T} title="Delete payment?" message="This will increase the amount owed to this supplier." onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteSupplierPayment(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function SupplierPaymentModal({ T, db, initial, onClose, onSave }) {
+  const [f, setF] = useState({
+    id: initial.id, date: initial.date || todayISO(), supplierId: initial.supplierId || (db.suppliers[0]?.id || ""),
+    amount: initial.amount || 0, method: initial.method || "Cash", reference: initial.reference || "", remarks: initial.remarks || "",
+  });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <ModalShell T={T} title={initial.id ? "Edit payment" : "New payment to supplier"} onClose={onClose}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Date"><input className="lg-input" type="date" value={f.date} onChange={set("date")} /></Field>
+        <Field T={T} label="Supplier">
+          <select className="lg-input" value={f.supplierId} onChange={set("supplierId")}>
+            {db.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Amount paid"><input className="lg-input" type="number" value={f.amount} onChange={set("amount")} /></Field>
+        <Field T={T} label="Payment method">
+          <select className="lg-input" value={f.method} onChange={set("method")}>
+            <option>Cash</option><option>Bank</option><option>Mobile Banking</option><option>Cheque</option>
+          </select>
+        </Field>
+      </div>
+      <Field T={T} label="Reference number"><input className="lg-input" value={f.reference} onChange={set("reference")} /></Field>
+      <Field T={T} label="Remarks"><input className="lg-input" value={f.remarks} onChange={set("remarks")} /></Field>
+      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!f.supplierId || !f.amount}
+        onClick={() => onSave({ ...f, amount: Number(f.amount) })}>Save payment</button>
     </ModalShell>
   );
 }
@@ -1180,12 +1510,14 @@ function CashFlowPage({ T, db, cashFlowSeries, totals }) {
   );
 }
 
-function ReportsPage({ T, db, customerBalance }) {
+function ReportsPage({ T, db, customerBalance, supplierBalance }) {
   const reports = [
     { label: "Sales report", data: () => db.sales.map((s) => ({ Date: fmtDateDMY(s.date), Invoice: s.invoiceNo, Customer: db.customers.find((c) => c.id === s.customerId)?.name || "", Product: s.productName, Qty: s.qty, Total: s.total })), file: "sales-report.csv" },
     { label: "Collection report", data: () => db.payments.map((p) => ({ Date: fmtDateDMY(p.date), Customer: db.customers.find((c) => c.id === p.customerId)?.name || "", Amount: p.amount, Method: p.method, Reference: p.reference })), file: "collection-report.csv" },
     { label: "Expense report", data: () => db.expenses.map((e) => ({ Date: fmtDateDMY(e.date), Category: e.category, Amount: e.amount, Method: e.method, Description: e.description })), file: "expense-report.csv" },
     { label: "Customer due report", data: () => db.customers.map((c) => ({ Customer: c.name, Mobile: c.mobile, Balance: customerBalance(c.id) })), file: "customer-due-report.csv" },
+    { label: "Purchase report", data: () => db.purchases.map((p) => ({ Date: fmtDateDMY(p.date), Invoice: p.invoiceNo, Supplier: db.suppliers.find((s) => s.id === p.supplierId)?.name || "", Product: p.productName, Qty: p.qty, Total: p.total })), file: "purchase-report.csv" },
+    { label: "Supplier due report", data: () => db.suppliers.map((s) => ({ Supplier: s.name, Mobile: s.mobile, Payable: supplierBalance(s.id) })), file: "supplier-due-report.csv" },
   ];
   return (
     <div>
