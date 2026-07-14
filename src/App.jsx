@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { supabase } from "./supabaseClient";
 import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis,
   CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell,
@@ -10,8 +11,8 @@ import {
   ArrowDownRight, CircleDollarSign, ShieldCheck, Menu, Building2, Truck, CreditCard, Banknote,
 } from "lucide-react";
 
-const DB_KEY = "ledger_db_v1";
 const CUR = "BDT";
+const TABLE_KEYS = ["customers", "sales", "payments", "expenses", "suppliers", "purchases", "supplierPayments"];
 
 const TOKENS = {
   ink: "#16283D",
@@ -98,6 +99,45 @@ const emptyDB = () => ({
   settings: { companyName: "Amber Trading Co.", openingCash: 50000, invoiceSeq: 1, purchaseInvoiceSeq: 1 },
 });
 
+async function fetchAllTables() {
+  const results = await Promise.all(TABLE_KEYS.map((t) => supabase.from(t).select("*")));
+  const errors = results.map((r) => r.error).filter(Boolean);
+  if (errors.length) throw errors[0];
+  const next = emptyDB();
+  TABLE_KEYS.forEach((key, i) => { next[key] = results[i].data || []; });
+  const settingsRes = await supabase.from("settings").select("*").eq("id", 1).single();
+  if (settingsRes.data) {
+    const { id, ...rest } = settingsRes.data;
+    next.settings = { ...next.settings, ...rest };
+  }
+  return next;
+}
+
+// Diffs prev vs next for each table and only pushes what actually changed to Supabase,
+// instead of re-uploading the entire database on every save.
+async function syncToSupabase(prev, next) {
+  const jobs = [];
+  for (const key of TABLE_KEYS) {
+    const prevRows = prev[key] || [];
+    const nextRows = next[key] || [];
+    if (prevRows === nextRows) continue;
+    const nextIds = new Set(nextRows.map((r) => r.id));
+    const toDelete = prevRows.filter((r) => !nextIds.has(r.id)).map((r) => r.id);
+    const toUpsert = nextRows.filter((r) => {
+      const old = prevRows.find((p) => p.id === r.id);
+      return !old || JSON.stringify(old) !== JSON.stringify(r);
+    });
+    if (toDelete.length) jobs.push(supabase.from(key).delete().in("id", toDelete));
+    if (toUpsert.length) jobs.push(supabase.from(key).upsert(toUpsert));
+  }
+  if (prev.settings !== next.settings) {
+    jobs.push(supabase.from("settings").upsert({ id: 1, ...next.settings }));
+  }
+  const results = await Promise.all(jobs);
+  const failed = results.find((r) => r && r.error);
+  if (failed) throw failed.error;
+}
+
 function downloadCSV(filename, rows) {
   if (!rows.length) return;
   const headers = Object.keys(rows[0]);
@@ -123,26 +163,40 @@ export default function App() {
   const [customerId, setCustomerId] = useState(null);
   const [view, setView] = useState("dashboard");
   const [toast, setToast] = useState(null);
+  const [syncing, setSyncing] = useState(false);
 
+  const notify = (msg, kind = "success") => {
+    setToast({ msg, kind });
+    setTimeout(() => setToast(null), 2600);
+  };
+
+  // On first load, if an admin session already exists (e.g. after a page refresh), restore it.
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(DB_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        setDb({ ...emptyDB(), ...parsed });
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (data?.session) {
+          const fullDb = await fetchAllTables();
+          setDb(fullDb);
+          setRole("admin");
+        }
+      } catch (e) {
+        console.error("session restore failed", e);
+      } finally {
+        setLoaded(true);
       }
-    } catch (e) {
-      // no existing data yet
-    } finally {
-      setLoaded(true);
-    }
+    })();
   }, []);
 
-  const persist = useCallback((nextDb) => {
+  const persist = useCallback(async (nextDb, prevDb) => {
+    setSyncing(true);
     try {
-      localStorage.setItem(DB_KEY, JSON.stringify(nextDb));
+      await syncToSupabase(prevDb, nextDb);
     } catch (e) {
-      console.error("storage save failed", e);
+      console.error("Supabase sync failed", e);
+      notify("Could not save to the server — check your connection and try again.", "danger");
+    } finally {
+      setSyncing(false);
     }
   }, []);
 
@@ -150,17 +204,12 @@ export default function App() {
     (updater) => {
       setDb((prev) => {
         const next = typeof updater === "function" ? updater(prev) : updater;
-        persist(next);
+        persist(next, prev);
         return next;
       });
     },
     [persist]
   );
-
-  const notify = (msg, kind = "success") => {
-    setToast({ msg, kind });
-    setTimeout(() => setToast(null), 2600);
-  };
 
   // ---------- derived ----------
   const customerBalance = useCallback(
@@ -395,29 +444,42 @@ export default function App() {
   };
 
   // ---------- auth ----------
-  const loginAsAdmin = (u, p) => {
-    if (u === "admin" && p === "admin123") {
-      setRole("admin");
-      setView("dashboard");
-      return true;
+  const loginAsAdmin = async (u, p) => {
+    const { error } = await supabase.auth.signInWithPassword({ email: u, password: p });
+    if (error) return false;
+    try {
+      const fullDb = await fetchAllTables();
+      setDb(fullDb);
+    } catch (e) {
+      console.error("failed to load data after login", e);
     }
-    return false;
+    setRole("admin");
+    setView("dashboard");
+    return true;
   };
 
-  const loginAsCustomer = (u, p) => {
-    const cust = db.customers.find((c) => c.username === u && c.password === p);
-    if (cust) {
-      setRole("customer");
-      setCustomerId(cust.id);
-      setView("profile");
-      return true;
-    }
-    return false;
+  const loginAsCustomer = async (u, p) => {
+    const { data, error } = await supabase.rpc("login_customer", { p_username: u, p_password: p });
+    if (error || !data) return false;
+    setDb({
+      ...emptyDB(),
+      customers: [data.customer],
+      sales: data.sales || [],
+      payments: data.payments || [],
+    });
+    setRole("customer");
+    setCustomerId(data.customer.id);
+    setView("profile");
+    return true;
   };
 
-  const logout = () => {
+  const logout = async () => {
+    if (role === "admin") {
+      try { await supabase.auth.signOut(); } catch (e) { /* ignore */ }
+    }
     setRole(null);
     setCustomerId(null);
+    setDb(emptyDB());
     setView("dashboard");
   };
 
@@ -501,11 +563,20 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
   const [u, setU] = useState("");
   const [p, setP] = useState("");
   const [err, setErr] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    const ok = mode === "admin" ? onAdmin(u, p) : onCustomer(u, p);
-    if (!ok) setErr("Incorrect username or password.");
+    setErr("");
+    setSubmitting(true);
+    try {
+      const ok = mode === "admin" ? await onAdmin(u, p) : await onCustomer(u, p);
+      if (!ok) setErr("Incorrect username or password.");
+    } catch (e2) {
+      setErr("Something went wrong — check your connection and try again.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -531,13 +602,13 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
             ))}
           </div>
           <form onSubmit={submit}>
-            <label style={{ fontSize: 12, color: T.slate, fontWeight: 600 }}>Username</label>
-            <input className="lg-input" style={{ marginTop: 4, marginBottom: 14 }} value={u} onChange={(e) => setU(e.target.value)} placeholder={mode === "admin" ? "admin" : "e.g. rahim01"} />
+            <label style={{ fontSize: 12, color: T.slate, fontWeight: 600 }}>{mode === "admin" ? "Email" : "Username"}</label>
+            <input className="lg-input" style={{ marginTop: 4, marginBottom: 14 }} value={u} onChange={(e) => setU(e.target.value)} placeholder={mode === "admin" ? "admin@example.com" : "e.g. rahim01"} />
             <label style={{ fontSize: 12, color: T.slate, fontWeight: 600 }}>Password</label>
             <input className="lg-input" type="password" style={{ marginTop: 4, marginBottom: 8 }} value={p} onChange={(e) => setP(e.target.value)} placeholder="••••••••" />
             {err && <div style={{ color: T.rule, fontSize: 12, marginBottom: 10 }}>{err}</div>}
-            <button className="lg-btn" type="submit" style={{ width: "100%", background: T.ink, color: "#fff", justifyContent: "center", padding: "10px 0", marginTop: 6 }}>
-              Sign in
+            <button className="lg-btn" type="submit" disabled={submitting} style={{ width: "100%", background: T.ink, color: "#fff", justifyContent: "center", padding: "10px 0", marginTop: 6, opacity: submitting ? 0.7 : 1 }}>
+              {submitting ? "Signing in…" : "Sign in"}
             </button>
           </form>
         </div>
