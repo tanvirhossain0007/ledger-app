@@ -1585,7 +1585,7 @@ function StatementModal({ T, db, kind, id, onClose }) {
               <div className="lg-mono" style={{ fontSize: 15, fontWeight: 600 }}>{fmtMoney(opening)}</div>
             </div>
           </div>
-          <div style={{ position: "relative", paddingLeft: 14, borderLeft: `2px solid ${T.rule}`, marginTop: 10 }}>
+          <div style={{ position: "relative", paddingLeft: 14, borderLeft: `2px solid ${T.rule}`, marginTop: 10, overflowX: "auto" }}>
             <table className="lg-table">
               <thead><tr><th>Date</th><th>Type</th><th>Invoice</th><th>Description</th><th style={{ textAlign: "right" }}>{debitLabel}</th><th style={{ textAlign: "right" }}>Credit</th><th style={{ textAlign: "right" }}>Balance</th></tr></thead>
               <tbody>
