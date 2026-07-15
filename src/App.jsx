@@ -1,10 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "./supabaseClient";
 import {
-  ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis,
-  CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell,
-} from "recharts";
-import {
   LayoutDashboard, Users, PackagePlus, Wallet, Receipt, ScrollText,
   TrendingUp, FileBarChart, Settings, LogOut, Plus, Search, Pencil,
   Trash2, X, Printer, Download, Sun, Moon, ChevronLeft, ArrowUpRight,
@@ -66,6 +62,26 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// recharts is a heavy library — only fetch it once a page that actually needs
+// a chart is opened, instead of bundling it into the initial page load.
+function useRecharts() {
+  const [mod, setMod] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    import("recharts").then((m) => { if (alive) setMod(m); });
+    return () => { alive = false; };
+  }, []);
+  return mod;
+}
+
+function ChartLoading({ T, height = 230 }) {
+  return (
+    <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: T.slateLight, fontSize: 12.5 }}>
+      Loading chart…
+    </div>
+  );
+}
+
 function hexToRgba(hex, alpha) {
   const h = hex.replace("#", "");
   const r = parseInt(h.substring(0, 2), 16);
@@ -77,7 +93,7 @@ function hexToRgba(hex, alpha) {
 function ARLogo({ size = 34 }) {
   return (
     <img
-      src="/arham-shield-logo.png"
+      src="/arham-shield-logo.jpg"
       alt="Arham Traders"
       style={{ width: size, height: size, objectFit: "contain", flexShrink: 0, filter: "drop-shadow(0 2px 4px rgba(0,0,0,.35))" }}
     />
@@ -809,6 +825,7 @@ function AdminShell(props) {
 }
 
 function AdminDashboard({ T, db, totals, monthlyChartData, cashFlowSeries, topCustomers, outstandingCustomers }) {
+  const RC = useRecharts();
   const cards = [
     { label: "Total customers", value: db.customers.length, tone: "", accent: "#B8912F" },
     { label: "Total sales", value: fmtMoney(totals.totalSales), tone: "", accent: "#3B6EA5" },
@@ -831,54 +848,62 @@ function AdminDashboard({ T, db, totals, monthlyChartData, cashFlowSeries, topCu
       <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16, marginBottom: 16 }}>
         <Card T={T}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Monthly sales, collections &amp; expenses</div>
-          <ResponsiveContainer width="100%" height={230}>
-            <BarChart data={monthlyChartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke={T.line} />
-              <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip />
-              <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="sales" fill={T.gold} name="Sales" />
-              <Bar dataKey="collections" fill={T.green} name="Collections" />
-              <Bar dataKey="expenses" fill={T.rule} name="Expenses" />
-            </BarChart>
-          </ResponsiveContainer>
+          {!RC ? <ChartLoading T={T} /> : (
+            <RC.ResponsiveContainer width="100%" height={230}>
+              <RC.BarChart data={monthlyChartData}>
+                <RC.CartesianGrid strokeDasharray="3 3" stroke={T.line} />
+                <RC.XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                <RC.YAxis tick={{ fontSize: 11 }} />
+                <RC.Tooltip />
+                <RC.Legend wrapperStyle={{ fontSize: 12 }} />
+                <RC.Bar dataKey="sales" fill={T.gold} name="Sales" />
+                <RC.Bar dataKey="collections" fill={T.green} name="Collections" />
+                <RC.Bar dataKey="expenses" fill={T.rule} name="Expenses" />
+              </RC.BarChart>
+            </RC.ResponsiveContainer>
+          )}
         </Card>
         <Card T={T}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Cash flow</div>
-          <ResponsiveContainer width="100%" height={230}>
-            <LineChart data={cashFlowSeries}>
-              <CartesianGrid strokeDasharray="3 3" stroke={T.line} />
-              <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-              <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip />
-              <Line type="monotone" dataKey="balance" stroke={T.ink} strokeWidth={2} dot={false} name="Cash balance" />
-            </LineChart>
-          </ResponsiveContainer>
+          {!RC ? <ChartLoading T={T} /> : (
+            <RC.ResponsiveContainer width="100%" height={230}>
+              <RC.LineChart data={cashFlowSeries}>
+                <RC.CartesianGrid strokeDasharray="3 3" stroke={T.line} />
+                <RC.XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                <RC.YAxis tick={{ fontSize: 11 }} />
+                <RC.Tooltip />
+                <RC.Line type="monotone" dataKey="balance" stroke={T.ink} strokeWidth={2} dot={false} name="Cash balance" />
+              </RC.LineChart>
+            </RC.ResponsiveContainer>
+          )}
         </Card>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <Card T={T}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Top customers by sales</div>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={topCustomers} layout="vertical">
-              <XAxis type="number" tick={{ fontSize: 11 }} />
-              <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={90} />
-              <Tooltip />
-              <Bar dataKey="sales" fill={T.gold} />
-            </BarChart>
-          </ResponsiveContainer>
+          {!RC ? <ChartLoading T={T} height={200} /> : (
+            <RC.ResponsiveContainer width="100%" height={200}>
+              <RC.BarChart data={topCustomers} layout="vertical">
+                <RC.XAxis type="number" tick={{ fontSize: 11 }} />
+                <RC.YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={90} />
+                <RC.Tooltip />
+                <RC.Bar dataKey="sales" fill={T.gold} />
+              </RC.BarChart>
+            </RC.ResponsiveContainer>
+          )}
         </Card>
         <Card T={T}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Outstanding customers</div>
-          <ResponsiveContainer width="100%" height={200}>
-            <BarChart data={outstandingCustomers} layout="vertical">
-              <XAxis type="number" tick={{ fontSize: 11 }} />
-              <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={90} />
-              <Tooltip />
-              <Bar dataKey="due" fill={T.rule} />
-            </BarChart>
-          </ResponsiveContainer>
+          {!RC ? <ChartLoading T={T} height={200} /> : (
+            <RC.ResponsiveContainer width="100%" height={200}>
+              <RC.BarChart data={outstandingCustomers} layout="vertical">
+                <RC.XAxis type="number" tick={{ fontSize: 11 }} />
+                <RC.YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={90} />
+                <RC.Tooltip />
+                <RC.Bar dataKey="due" fill={T.rule} />
+              </RC.BarChart>
+            </RC.ResponsiveContainer>
+          )}
         </Card>
       </div>
     </div>
@@ -1592,6 +1617,7 @@ function StatementModal({ T, db, kind, id, onClose }) {
 }
 
 function CashFlowPage({ T, db, cashFlowSeries, totals }) {
+  const RC = useRecharts();
   const [q, setQ] = useState("");
   const [typeFilter, setTypeFilter] = useState("All");
 
@@ -1637,18 +1663,20 @@ function CashFlowPage({ T, db, cashFlowSeries, totals }) {
         <StatCard T={T} label="Net cash flow" value={fmtMoney(totals.netCashFlow)} tone={totals.netCashFlow >= 0 ? "good" : "danger"} />
       </div>
       <Card T={T} style={{ marginBottom: 16 }}>
-        <ResponsiveContainer width="100%" height={240}>
-          <LineChart data={cashFlowSeries}>
-            <CartesianGrid strokeDasharray="3 3" stroke={T.line} />
-            <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-            <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Line type="monotone" dataKey="in" stroke={T.green} name="Cash in" dot={false} />
-            <Line type="monotone" dataKey="out" stroke={T.rule} name="Cash out" dot={false} />
-            <Line type="monotone" dataKey="balance" stroke={T.ink} strokeWidth={2} name="Balance" dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
+        {!RC ? <ChartLoading T={T} height={240} /> : (
+          <RC.ResponsiveContainer width="100%" height={240}>
+            <RC.LineChart data={cashFlowSeries}>
+              <RC.CartesianGrid strokeDasharray="3 3" stroke={T.line} />
+              <RC.XAxis dataKey="date" tick={{ fontSize: 10 }} />
+              <RC.YAxis tick={{ fontSize: 11 }} />
+              <RC.Tooltip />
+              <RC.Legend wrapperStyle={{ fontSize: 12 }} />
+              <RC.Line type="monotone" dataKey="in" stroke={T.green} name="Cash in" dot={false} />
+              <RC.Line type="monotone" dataKey="out" stroke={T.rule} name="Cash out" dot={false} />
+              <RC.Line type="monotone" dataKey="balance" stroke={T.ink} strokeWidth={2} name="Balance" dot={false} />
+            </RC.LineChart>
+          </RC.ResponsiveContainer>
+        )}
       </Card>
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <input className="lg-input" style={{ width: 220 }} placeholder="Search reason (customer, expense, supplier)" value={q} onChange={(e) => setQ(e.target.value)} />
