@@ -718,7 +718,7 @@ function Shell({ T, dark, setDark, logout, title, navItems, view, setView, child
 
         <div style={{
           margin: 10, padding: 16, borderRadius: 14,
-          background: hexToRgba(T.paper, 0.72), backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)",
+          background: hexToRgba(T.paper, 0.4), backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)",
         }}>
           {children}
         </div>
@@ -733,7 +733,7 @@ function Shell({ T, dark, setDark, logout, title, navItems, view, setView, child
       </div>
       <div style={{
         flex: 1, minWidth: 0, padding: 24,
-        background: hexToRgba(T.paper, 0.72), backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)",
+        background: hexToRgba(T.paper, 0.4), backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)",
       }}>
         {children}
       </div>
@@ -787,7 +787,6 @@ function AdminShell(props) {
     { key: "purchases", label: "Purchase entry", icon: Building2, color: "#3B6EA5", frontColor: "#E0B463" },
     { key: "supplierPayments", label: "Payments", icon: CreditCard, color: "#A34C6B", frontColor: "#7FD1E0" },
     { key: "expenses", label: "Expenses", icon: Receipt, color: "#B23A2E", frontColor: "#8FC1E8" },
-    { key: "statements", label: "Statements", icon: ScrollText, color: "#C1663B", frontColor: "#7FC2CB" },
     { key: "cashflow", label: "Cash flow", icon: TrendingUp, color: "#2E8B8B", frontColor: "#E29BD1" },
     { key: "reports", label: "Reports", icon: FileBarChart, color: "#4C5B8A", frontColor: "#F0C96B" },
     { key: "settings", label: "Settings", icon: Settings, color: "#7A7A7A", frontColor: "#A8E6D9" },
@@ -802,7 +801,6 @@ function AdminShell(props) {
       {view === "purchases" && <PurchasesPage {...props} />}
       {view === "supplierPayments" && <SupplierPaymentsPage {...props} />}
       {view === "expenses" && <ExpensesPage {...props} />}
-      {view === "statements" && <StatementsPage {...props} />}
       {view === "cashflow" && <CashFlowPage {...props} />}
       {view === "reports" && <ReportsPage {...props} />}
       {view === "settings" && <SettingsPage {...props} />}
@@ -892,16 +890,18 @@ function CustomersPage({ T, db, saveCustomer, deleteCustomer, customerBalance })
   const [statusFilter, setStatusFilter] = useState("All");
   const [modal, setModal] = useState(null); // customer obj or {} for new, null closed
   const [confirmDel, setConfirmDel] = useState(null);
+  const [statementId, setStatementId] = useState(null);
 
   const filtered = db.customers.filter((c) => {
     const matchQ = !q || c.name.toLowerCase().includes(q.toLowerCase()) || c.mobile.includes(q);
     const matchStatus = statusFilter === "All" || c.status === statusFilter;
     return matchQ && matchStatus;
   });
+  const totalBalance = db.customers.reduce((a, c) => a + customerBalance(c.id), 0);
 
   return (
     <div>
-      <PageHeader T={T} title="Customers" subtitle={`${db.customers.length} total`}
+      <PageHeader T={T} title="Retail customers" subtitle={`${db.customers.length} total — click a name to open their statement`}
         action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add customer</button>} />
       <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
         <div style={{ position: "relative", flex: 1, maxWidth: 300 }}>
@@ -921,7 +921,11 @@ function CustomersPage({ T, db, saveCustomer, deleteCustomer, customerBalance })
               return (
                 <tr key={c.id}>
                   <td className="lg-mono" style={{ fontSize: 11.5, color: T.slate }}>{c.id}</td>
-                  <td style={{ fontWeight: 500 }}>{c.name}</td>
+                  <td>
+                    <button onClick={() => setStatementId(c.id)} style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0, fontWeight: 600, color: T.ink, textDecoration: "underline", textDecorationColor: T.line, fontSize: 13 }}>
+                      {c.name}
+                    </button>
+                  </td>
                   <td className="lg-mono">{c.mobile}</td>
                   <td>{c.company || "—"}</td>
                   <td><span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: c.status === "Active" ? T.greenBg : T.dangerBg, color: c.status === "Active" ? T.green : T.rule, fontWeight: 600 }}>{c.status}</span></td>
@@ -935,6 +939,15 @@ function CustomersPage({ T, db, saveCustomer, deleteCustomer, customerBalance })
             })}
             {!filtered.length && <tr><td colSpan={7} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No customers found.</td></tr>}
           </tbody>
+          {!!db.customers.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={5} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total balance (all customers)</td>
+                <td className="lg-mono" style={{ fontWeight: 700, fontSize: 14, color: totalBalance > 0 ? T.rule : T.green, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalBalance)}</td>
+                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </Card>
 
@@ -943,6 +956,7 @@ function CustomersPage({ T, db, saveCustomer, deleteCustomer, customerBalance })
         <ConfirmModal T={T} title="Delete customer?" message={`This removes ${confirmDel.name} and cannot be undone.`}
           onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteCustomer(confirmDel.id); setConfirmDel(null); }} />
       )}
+      {statementId && <StatementModal T={T} db={db} kind="customer" id={statementId} onClose={() => setStatementId(null)} />}
     </div>
   );
 }
@@ -1217,10 +1231,12 @@ function SuppliersPage({ T, db, saveSupplier, deleteSupplier, supplierBalance })
   const [q, setQ] = useState("");
   const [modal, setModal] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
+  const [statementId, setStatementId] = useState(null);
   const filtered = db.suppliers.filter((s) => !q || s.name.toLowerCase().includes(q.toLowerCase()) || (s.mobile || "").includes(q));
+  const totalPayable = db.suppliers.reduce((a, s) => a + supplierBalance(s.id), 0);
   return (
     <div>
-      <PageHeader T={T} title="Suppliers" subtitle={`${db.suppliers.length} total — businesses you buy stock from`}
+      <PageHeader T={T} title="Suppliers" subtitle={`${db.suppliers.length} total — click a name to open their statement`}
         action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add supplier</button>} />
       <div style={{ position: "relative", maxWidth: 300, marginBottom: 14 }}>
         <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
@@ -1235,7 +1251,11 @@ function SuppliersPage({ T, db, saveSupplier, deleteSupplier, supplierBalance })
               return (
                 <tr key={s.id}>
                   <td className="lg-mono" style={{ fontSize: 11.5, color: T.slate }}>{s.id}</td>
-                  <td style={{ fontWeight: 500 }}>{s.name}</td>
+                  <td>
+                    <button onClick={() => setStatementId(s.id)} style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0, fontWeight: 600, color: T.ink, textDecoration: "underline", textDecorationColor: T.line, fontSize: 13 }}>
+                      {s.name}
+                    </button>
+                  </td>
                   <td className="lg-mono">{s.mobile}</td>
                   <td>{s.company || "—"}</td>
                   <td><span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: s.status === "Active" ? T.greenBg : T.dangerBg, color: s.status === "Active" ? T.green : T.rule, fontWeight: 600 }}>{s.status}</span></td>
@@ -1249,10 +1269,20 @@ function SuppliersPage({ T, db, saveSupplier, deleteSupplier, supplierBalance })
             })}
             {!filtered.length && <tr><td colSpan={7} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No suppliers added yet.</td></tr>}
           </tbody>
+          {!!db.suppliers.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={5} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total payable (all suppliers)</td>
+                <td className="lg-mono" style={{ fontWeight: 700, fontSize: 14, color: totalPayable > 0 ? T.rule : T.green, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalPayable)}</td>
+                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </Card>
       {modal && <SupplierModal T={T} initial={modal} onClose={() => setModal(null)} onSave={(d) => { saveSupplier(d); setModal(null); }} />}
       {confirmDel && <ConfirmModal T={T} title="Delete supplier?" message={`This removes ${confirmDel.name} and cannot be undone.`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteSupplier(confirmDel.id); setConfirmDel(null); }} />}
+      {statementId && <StatementModal T={T} db={db} kind="supplier" id={statementId} onClose={() => setStatementId(null)} />}
     </div>
   );
 }
@@ -1453,14 +1483,34 @@ function buildStatementRows(db, customerId) {
   return { rows, opening: Number(cust.openingBalance || 0), closing: bal };
 }
 
-function StatementsPage({ T, db, customerBalance }) {
-  const [custId, setCustId] = useState(db.customers[0]?.id || "");
+function buildSupplierStatementRows(db, supplierId) {
+  const sup = db.suppliers.find((s) => s.id === supplierId);
+  if (!sup) return { rows: [], opening: 0, closing: 0 };
+  const purchases = db.purchases.filter((p) => p.supplierId === supplierId).map((p) => ({
+    date: p.date, type: "Purchase", invoiceNo: p.invoiceNo, description: p.productName, debit: Number(p.total), credit: 0,
+  }));
+  const payments = db.supplierPayments.filter((p) => p.supplierId === supplierId).map((p) => ({
+    date: p.date, type: "Payment", invoiceNo: p.reference || "—", description: `${p.method} payment`, debit: 0, credit: Number(p.amount),
+  }));
+  const merged = [...purchases, ...payments].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  let bal = Number(sup.openingBalance || 0);
+  const rows = merged.map((r) => {
+    bal = bal + r.debit - r.credit;
+    return { ...r, balance: bal };
+  });
+  return { rows, opening: Number(sup.openingBalance || 0), closing: bal };
+}
+
+// Reusable statement viewer — opened by clicking a customer or supplier name.
+// kind: "customer" | "supplier"
+function StatementModal({ T, db, kind, id, onClose }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [q, setQ] = useState("");
 
-  const cust = db.customers.find((c) => c.id === custId);
-  const { rows, opening } = buildStatementRows(db, custId);
+  const isCustomer = kind === "customer";
+  const person = isCustomer ? db.customers.find((c) => c.id === id) : db.suppliers.find((s) => s.id === id);
+  const { rows, opening } = isCustomer ? buildStatementRows(db, id) : buildSupplierStatementRows(db, id);
   const filteredRows = rows.filter((r) => {
     if (from && r.date < from) return false;
     if (to && r.date > to) return false;
@@ -1468,80 +1518,119 @@ function StatementsPage({ T, db, customerBalance }) {
     return true;
   });
   const closing = filteredRows.length ? filteredRows[filteredRows.length - 1].balance : opening;
+  const debitLabel = isCustomer ? "Debit (Sale)" : "Debit (Purchase)";
+  const balanceLabel = isCustomer ? "due" : "payable";
 
-  const exportCSV = () => downloadCSV(`statement-${cust?.name || "customer"}.csv`, filteredRows.map((r) => ({
+  const exportCSV = () => downloadCSV(`statement-${person?.name || kind}.csv`, filteredRows.map((r) => ({
     Date: fmtDateDMY(r.date), Type: r.type, Invoice: r.invoiceNo, Description: r.description,
     Debit: r.debit || "", Credit: r.credit || "", Balance: r.balance,
   })));
 
-  return (
-    <div>
-      <PageHeader T={T} title="Customer statement" subtitle="Running ledger — automatically built from sales and payments"
-        action={
-          <div style={{ display: "flex", gap: 8 }} className="no-print">
-            <button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={() => window.print()}><Printer size={14} /> Print</button>
-            <button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportCSV}><Download size={14} /> Export CSV</button>
-          </div>
-        } />
-      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }} className="no-print">
-        <select className="lg-input" style={{ width: 220 }} value={custId} onChange={(e) => setCustId(e.target.value)}>
-          {db.customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <input className="lg-input" style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        <input className="lg-input" style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        <input className="lg-input" style={{ width: 200 }} placeholder="Search description / invoice" value={q} onChange={(e) => setQ(e.target.value)} />
-      </div>
+  if (!person) return null;
 
-      {cust && (
-        <Card T={T} style={{ padding: 24 }}>
-          <div className="print-area">
-            <div style={{ display: "flex", justifyContent: "space-between", borderBottom: `2px solid ${T.rule}`, paddingBottom: 12, marginBottom: 4 }}>
-              <div>
-                <div className="lg-display" style={{ fontSize: 18, fontWeight: 600 }}>{cust.name}</div>
-                <div style={{ fontSize: 12, color: T.slate }}>{cust.mobile} {cust.company ? `• ${cust.company}` : ""}</div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 11, color: T.slate }}>Opening balance</div>
-                <div className="lg-mono" style={{ fontSize: 15, fontWeight: 600 }}>{fmtMoney(opening)}</div>
-              </div>
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 45, padding: 16 }}>
+      <div style={{ background: T.paperCard, borderRadius: 12, padding: 22, width: "100%", maxWidth: 720, maxHeight: "90vh", overflowY: "auto" }}>
+        <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, gap: 10, flexWrap: "wrap" }}>
+          <div>
+            <div className="lg-display" style={{ fontSize: 17, fontWeight: 600, color: T.ink }}>{person.name}'s statement</div>
+            <div style={{ fontSize: 12, color: T.slate, marginTop: 2 }}>Running ledger — automatically built from {isCustomer ? "sales and payments" : "purchases and payments"}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={() => window.print()}><Printer size={14} /> Print</button>
+            <button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportCSV}><Download size={14} /> CSV</button>
+            <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: T.slate }}><X size={20} /></button>
+          </div>
+        </div>
+
+        <div className="no-print" style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+          <input className="lg-input" style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <input className="lg-input" style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          <input className="lg-input" style={{ width: 200 }} placeholder="Search description / invoice" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+
+        <div className="print-area">
+          <div style={{ display: "flex", justifyContent: "space-between", borderBottom: `2px solid ${T.rule}`, paddingBottom: 12, marginBottom: 4 }}>
+            <div>
+              <div className="lg-display" style={{ fontSize: 18, fontWeight: 600 }}>{person.name}</div>
+              <div style={{ fontSize: 12, color: T.slate }}>{person.mobile} {person.company ? `• ${person.company}` : ""}</div>
             </div>
-            <div style={{ position: "relative", paddingLeft: 14, borderLeft: `2px solid ${T.rule}`, marginTop: 10 }}>
-              <table className="lg-table">
-                <thead><tr><th>Date</th><th>Type</th><th>Invoice</th><th>Description</th><th style={{ textAlign: "right" }}>Debit</th><th style={{ textAlign: "right" }}>Credit</th><th style={{ textAlign: "right" }}>Balance</th></tr></thead>
-                <tbody>
-                  {filteredRows.map((r, i) => (
-                    <tr key={i}>
-                      <td className="lg-mono">{fmtDateDMY(r.date)}</td>
-                      <td>{r.type}</td>
-                      <td className="lg-mono">{r.invoiceNo}</td>
-                      <td>{r.description}</td>
-                      <td className="lg-mono" style={{ textAlign: "right", color: r.debit ? T.rule : T.slateLight }}>{r.debit ? fmtMoney(r.debit) : "—"}</td>
-                      <td className="lg-mono" style={{ textAlign: "right", color: r.credit ? T.green : T.slateLight }}>{r.credit ? fmtMoney(r.credit) : "—"}</td>
-                      <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(r.balance)}</td>
-                    </tr>
-                  ))}
-                  {!filteredRows.length && <tr><td colSpan={7} style={{ textAlign: "center", padding: 20, color: T.slateLight }}>No transactions in this range.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12, paddingTop: 12, borderTop: `2px solid ${T.rule}` }}>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 11, color: T.slate }}>Closing balance</div>
-                <div className="lg-mono" style={{ fontSize: 18, fontWeight: 600, color: closing > 0 ? T.rule : T.green }}>{fmtMoney(closing)}</div>
-              </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 11, color: T.slate }}>Opening balance</div>
+              <div className="lg-mono" style={{ fontSize: 15, fontWeight: 600 }}>{fmtMoney(opening)}</div>
             </div>
           </div>
-        </Card>
-      )}
+          <div style={{ position: "relative", paddingLeft: 14, borderLeft: `2px solid ${T.rule}`, marginTop: 10 }}>
+            <table className="lg-table">
+              <thead><tr><th>Date</th><th>Type</th><th>Invoice</th><th>Description</th><th style={{ textAlign: "right" }}>{debitLabel}</th><th style={{ textAlign: "right" }}>Credit</th><th style={{ textAlign: "right" }}>Balance</th></tr></thead>
+              <tbody>
+                {filteredRows.map((r, i) => (
+                  <tr key={i}>
+                    <td className="lg-mono">{fmtDateDMY(r.date)}</td>
+                    <td>{r.type}</td>
+                    <td className="lg-mono">{r.invoiceNo}</td>
+                    <td>{r.description}</td>
+                    <td className="lg-mono" style={{ textAlign: "right", color: r.debit ? T.rule : T.slateLight }}>{r.debit ? fmtMoney(r.debit) : "—"}</td>
+                    <td className="lg-mono" style={{ textAlign: "right", color: r.credit ? T.green : T.slateLight }}>{r.credit ? fmtMoney(r.credit) : "—"}</td>
+                    <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(r.balance)}</td>
+                  </tr>
+                ))}
+                {!filteredRows.length && <tr><td colSpan={7} style={{ textAlign: "center", padding: 20, color: T.slateLight }}>No transactions in this range.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12, paddingTop: 12, borderTop: `2px solid ${T.rule}` }}>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 11, color: T.slate }}>Closing balance ({balanceLabel})</div>
+              <div className="lg-mono" style={{ fontSize: 18, fontWeight: 600, color: closing > 0 ? T.rule : T.green }}>{fmtMoney(closing)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
 function CashFlowPage({ T, db, cashFlowSeries, totals }) {
-  const rows = [...cashFlowSeries].reverse();
+  const [q, setQ] = useState("");
+  const [typeFilter, setTypeFilter] = useState("All");
+
+  const transactions = useMemo(() => {
+    const rows = [];
+    db.payments.forEach((p) => {
+      const cust = db.customers.find((c) => c.id === p.customerId);
+      rows.push({ date: p.date, dir: "in", label: `Payment from ${cust ? cust.name : "—"}`, sub: p.method, amount: Number(p.amount) });
+    });
+    db.expenses.forEach((e) => {
+      rows.push({ date: e.date, dir: "out", label: `Expense — ${e.category}`, sub: e.description || e.method, amount: Number(e.amount) });
+    });
+    db.supplierPayments.forEach((p) => {
+      const sup = db.suppliers.find((s) => s.id === p.supplierId);
+      rows.push({ date: p.date, dir: "out", label: `Payment to ${sup ? sup.name : "—"} (supplier)`, sub: p.method, amount: Number(p.amount) });
+    });
+    rows.sort((a, b) => (a.date || "").localeCompare(b.date || "") || 0);
+    let bal = Number(db.settings.openingCash || 0);
+    const withBalance = rows.map((r) => {
+      bal = bal + (r.dir === "in" ? r.amount : -r.amount);
+      return { ...r, balance: bal };
+    });
+    return withBalance.reverse();
+  }, [db]);
+
+  const filtered = transactions.filter((r) => {
+    if (typeFilter !== "All" && r.dir !== typeFilter) return false;
+    if (q && !r.label.toLowerCase().includes(q.toLowerCase())) return false;
+    return true;
+  });
+
+  const exportCSV = () => downloadCSV("cash-flow-detail.csv", filtered.map((r) => ({
+    Date: fmtDateDMY(r.date), Direction: r.dir === "in" ? "Cash In" : "Cash Out", Reason: r.label, Detail: r.sub || "", Amount: r.amount, Balance: r.balance,
+  })));
+
   return (
     <div>
-      <PageHeader T={T} title="Cash flow" subtitle="Cash in (payments) vs cash out (expenses), with running balance" />
+      <PageHeader T={T} title="Cash flow" subtitle="Every cash movement with its reason — customer payment, expense, or supplier payment"
+        action={<button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportCSV}><Download size={14} /> Export CSV</button>} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px,1fr))", gap: 12, marginBottom: 16 }}>
         <StatCard T={T} label="Opening cash" value={fmtMoney(db.settings.openingCash)} />
         <StatCard T={T} label="Cash in hand" value={fmtMoney(totals.cashInHand)} />
@@ -1561,19 +1650,29 @@ function CashFlowPage({ T, db, cashFlowSeries, totals }) {
           </LineChart>
         </ResponsiveContainer>
       </Card>
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <input className="lg-input" style={{ width: 220 }} placeholder="Search reason (customer, expense, supplier)" value={q} onChange={(e) => setQ(e.target.value)} />
+        <select className="lg-input" style={{ width: 160 }} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+          <option value="All">All movements</option>
+          <option value="in">Cash in only</option>
+          <option value="out">Cash out only</option>
+        </select>
+      </div>
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
-          <thead><tr><th>Date</th><th style={{ textAlign: "right" }}>Cash in</th><th style={{ textAlign: "right" }}>Cash out</th><th style={{ textAlign: "right" }}>Balance</th></tr></thead>
+          <thead><tr><th>Date</th><th>Reason</th><th>Detail</th><th style={{ textAlign: "right" }}>Cash in</th><th style={{ textAlign: "right" }}>Cash out</th><th style={{ textAlign: "right" }}>Balance</th></tr></thead>
           <tbody>
-            {rows.map((r, i) => (
+            {filtered.map((r, i) => (
               <tr key={i}>
-                <td className="lg-mono">{r.date}</td>
-                <td className="lg-mono" style={{ textAlign: "right", color: T.green }}>{r.in ? fmtMoney(r.in) : "—"}</td>
-                <td className="lg-mono" style={{ textAlign: "right", color: T.rule }}>{r.out ? fmtMoney(r.out) : "—"}</td>
+                <td className="lg-mono">{fmtDateDMY(r.date)}</td>
+                <td style={{ fontWeight: 500 }}>{r.label}</td>
+                <td style={{ color: T.slateLight, fontSize: 12 }}>{r.sub || "—"}</td>
+                <td className="lg-mono" style={{ textAlign: "right", color: T.green }}>{r.dir === "in" ? fmtMoney(r.amount) : "—"}</td>
+                <td className="lg-mono" style={{ textAlign: "right", color: T.rule }}>{r.dir === "out" ? fmtMoney(r.amount) : "—"}</td>
                 <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(r.balance)}</td>
               </tr>
             ))}
-            {!rows.length && <tr><td colSpan={4} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No cash movements recorded yet.</td></tr>}
+            {!filtered.length && <tr><td colSpan={6} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No cash movements recorded yet.</td></tr>}
           </tbody>
         </table>
       </Card>
