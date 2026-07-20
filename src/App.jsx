@@ -530,10 +530,11 @@ export default function App() {
         table.lg-table th { text-align:left; padding:8px 10px; color:${T.slate}; font-weight:600; border-bottom:1px solid ${T.line}; white-space:nowrap; }
         table.lg-table td { padding:8px 10px; border-bottom:1px solid ${T.line}; }
         @keyframes pageFadeIn {
-          from { opacity: 0; transform: translateY(8px); }
-          to { opacity: 1; transform: translateY(0); }
+          0% { opacity: 0; transform: translateX(28px) scale(.97); filter: blur(4px); }
+          60% { opacity: 1; filter: blur(0); }
+          100% { opacity: 1; transform: translateX(0) scale(1); filter: blur(0); }
         }
-        .page-transition { animation: pageFadeIn .28s ease; }
+        .page-transition { animation: pageFadeIn .5s cubic-bezier(.22,1,.36,1); transform-origin: left center; }
         @media print {
           .no-print { display:none !important; }
           .print-area { background:white !important; color:black !important; }
