@@ -605,10 +605,11 @@ export default function App() {
   const nextMpPurchaseInvoiceNo = () => `MPP-${String(db.mpSettings.purchaseInvoiceSeq).padStart(4, "0")}`;
   const nextMpSaleInvoiceNo = () => `MPS-${String(db.mpSettings.saleInvoiceSeq).padStart(4, "0")}`;
 
-  const saveMpPurchase = (data) => {
+  const saveMpPurchase = (data, newProduct) => {
     updateDb((prev) => {
       const exists = prev.mpPurchases.some((p) => p.id === data.id);
       let mpPurchases, mpSettings = prev.mpSettings;
+      const mpProducts = newProduct ? [...prev.mpProducts, newProduct] : prev.mpProducts;
       if (exists) {
         mpPurchases = prev.mpPurchases.map((p) => (p.id === data.id ? data : p));
       } else {
@@ -616,7 +617,7 @@ export default function App() {
         mpPurchases = [...prev.mpPurchases, { ...data, id: uid("MPPUR"), invoiceNo }];
         mpSettings = { ...prev.mpSettings, purchaseInvoiceSeq: prev.mpSettings.purchaseInvoiceSeq + 1 };
       }
-      return { ...prev, mpPurchases, mpSettings };
+      return { ...prev, mpPurchases, mpProducts, mpSettings };
     });
     notify("Purchase recorded — stock updated");
   };
@@ -2369,13 +2370,13 @@ function MpPurchasePage({ T, db, saveMpPurchase, deleteMpPurchase, saveMpProduct
           </tbody>
         </table>
       </Card>
-      {modal && <MpPurchaseModal T={T} db={db} nextMpPurchaseInvoiceNo={nextMpPurchaseInvoiceNo} onClose={() => setModal(null)} onSave={(d) => { saveMpPurchase(d); setModal(null); }} saveMpProduct={saveMpProduct} />}
+      {modal && <MpPurchaseModal T={T} db={db} nextMpPurchaseInvoiceNo={nextMpPurchaseInvoiceNo} onClose={() => setModal(null)} onSave={(d, newProduct) => { saveMpPurchase(d, newProduct); setModal(null); }} />}
       {confirmDel && <ConfirmModal T={T} title="Delete purchase?" message="This will reduce stock and the amount owed to this supplier." onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteMpPurchase(confirmDel.id); setConfirmDel(null); }} />}
     </div>
   );
 }
 
-function MpPurchaseModal({ T, db, nextMpPurchaseInvoiceNo, onClose, onSave, saveMpProduct }) {
+function MpPurchaseModal({ T, db, nextMpPurchaseInvoiceNo, onClose, onSave }) {
   const [productMode, setProductMode] = useState(db.mpProducts.length ? "existing" : "new");
   const [f, setF] = useState({
     date: todayISO(), supplierId: db.mpSuppliers[0]?.id || "", productId: db.mpProducts[0]?.id || "",
@@ -2387,12 +2388,13 @@ function MpPurchaseModal({ T, db, nextMpPurchaseInvoiceNo, onClose, onSave, save
   const save = () => {
     let productId = f.productId;
     let productName = db.mpProducts.find((p) => p.id === productId)?.name || "";
+    let newProduct = null;
     if (productMode === "new") {
       productId = uid("MPPRD");
       productName = f.newProductName;
-      saveMpProduct({ id: productId, name: productName, status: "Active" });
+      newProduct = { id: productId, name: productName, status: "Active" };
     }
-    onSave({ date: f.date, supplierId: f.supplierId, productId, productName, qty: Number(f.qty), dp: Number(f.dp), remarks: f.remarks });
+    onSave({ date: f.date, supplierId: f.supplierId, productId, productName, qty: Number(f.qty), dp: Number(f.dp), remarks: f.remarks }, newProduct);
   };
 
   return (
