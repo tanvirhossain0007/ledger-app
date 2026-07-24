@@ -131,7 +131,7 @@ const emptyDB = () => ({
   mpSales: [],
   mpPayments: [],
   mpSupplierPayments: [],
-  mpSettings: { openingCash: 0, purchaseInvoiceSeq: 1, saleInvoiceSeq: 1, marginPercent: 40 },
+  mpSettings: { openingCash: 0, purchaseInvoiceSeq: 1, saleInvoiceSeq: 1, marginPercent: null },
 });
 
 async function fetchAllTables() {
@@ -155,31 +155,48 @@ async function fetchAllTables() {
 
 // Diffs prev vs next for each table and only pushes what actually changed to Supabase,
 // instead of re-uploading the entire database on every save.
+// Tables other rows point to via a foreign key (must be synced first).
+const PARENT_TABLE_KEYS = ["customers", "suppliers", "expenses", "mpCustomers", "mpSuppliers", "mpSalesmen", "mpProducts"];
+// Tables that reference a parent row above (must be synced after their parent exists).
+const CHILD_TABLE_KEYS = ["sales", "payments", "purchases", "supplierPayments", "mpPurchases", "mpSales", "mpPayments", "mpSupplierPayments"];
+
 async function syncToSupabase(prev, next) {
-  const jobs = [];
-  for (const key of ALL_TABLE_KEYS) {
-    const prevRows = prev[key] || [];
-    const nextRows = next[key] || [];
-    if (prevRows === nextRows) continue;
-    const nextIds = new Set(nextRows.map((r) => r.id));
-    const toDelete = prevRows.filter((r) => !nextIds.has(r.id)).map((r) => r.id);
-    const toUpsert = nextRows.filter((r) => {
-      const old = prevRows.find((p) => p.id === r.id);
-      return !old || JSON.stringify(old) !== JSON.stringify(r);
-    });
-    const tableName = tableNameFor(key);
-    if (toDelete.length) jobs.push(supabase.from(tableName).delete().in("id", toDelete));
-    if (toUpsert.length) jobs.push(supabase.from(tableName).upsert(toUpsert));
-  }
+  const buildJobs = (keys) => {
+    const jobs = [];
+    for (const key of keys) {
+      const prevRows = prev[key] || [];
+      const nextRows = next[key] || [];
+      if (prevRows === nextRows) continue;
+      const nextIds = new Set(nextRows.map((r) => r.id));
+      const toDelete = prevRows.filter((r) => !nextIds.has(r.id)).map((r) => r.id);
+      const toUpsert = nextRows.filter((r) => {
+        const old = prevRows.find((p) => p.id === r.id);
+        return !old || JSON.stringify(old) !== JSON.stringify(r);
+      });
+      const tableName = tableNameFor(key);
+      if (toDelete.length) jobs.push(supabase.from(tableName).delete().in("id", toDelete));
+      if (toUpsert.length) jobs.push(supabase.from(tableName).upsert(toUpsert));
+    }
+    return jobs;
+  };
+
+  // Phase 1: parent tables (and settings) — must finish first so foreign keys resolve.
+  const parentJobs = buildJobs(PARENT_TABLE_KEYS);
   if (prev.settings !== next.settings) {
-    jobs.push(supabase.from("settings").upsert({ id: 1, ...next.settings }));
+    parentJobs.push(supabase.from("settings").upsert({ id: 1, ...next.settings }));
   }
   if (prev.mpSettings !== next.mpSettings) {
-    jobs.push(supabase.from("mp_settings").upsert({ id: 1, ...next.mpSettings }));
+    parentJobs.push(supabase.from("mp_settings").upsert({ id: 1, ...next.mpSettings }));
   }
-  const results = await Promise.all(jobs);
-  const failed = results.find((r) => r && r.error);
-  if (failed) throw failed.error;
+  const parentResults = await Promise.all(parentJobs);
+  const parentFailed = parentResults.find((r) => r && r.error);
+  if (parentFailed) throw parentFailed.error;
+
+  // Phase 2: child tables — safe now that anything they reference already exists.
+  const childJobs = buildJobs(CHILD_TABLE_KEYS);
+  const childResults = await Promise.all(childJobs);
+  const childFailed = childResults.find((r) => r && r.error);
+  if (childFailed) throw childFailed.error;
 }
 
 function downloadCSV(filename, rows) {
@@ -328,7 +345,7 @@ export default function App() {
   // One row per product: total bought/sold, remaining stock, weighted-average DP,
   // auto TP (DP + your chosen margin %, set in Multi Plug Settings), and total DP/TP value in stock.
   const mpStockReport = useMemo(() => {
-    const marginPercent = Number(db.mpSettings.marginPercent ?? 40);
+    const marginPercent = Number(db.mpSettings.marginPercent ?? 0); // 0 until you set it in Settings — no silent default
     return db.mpProducts.map((prod) => {
       const purchases = db.mpPurchases.filter((p) => p.productId === prod.id);
       const sales = db.mpSales.filter((s) => s.productId === prod.id);
@@ -364,7 +381,7 @@ export default function App() {
     const totalStockTPValue = mpStockReport.reduce((a, r) => a + r.totalTPValue, 0);
     const totalCommission = db.mpSales.reduce((a, s) => {
       const sm = db.mpSalesmen.find((x) => x.id === s.salesmanId);
-      const pct = sm ? Number(sm.commissionPercent || 10) : 10;
+      const pct = sm ? Number(sm.commissionPercent || 0) : 0; // 0 until a commission % is set for this salesman
       return a + Number(s.total) * (pct / 100);
     }, 0);
     return {
@@ -2015,7 +2032,9 @@ function MpDashboard({ T, db, mpTotals, mpStockReport }) {
   );
 }
 
-function MpStockReportPage({ T, mpStockReport }) {
+function MpStockReportPage({ T, mpStockReport, db, saveMpProduct, deleteMpProduct }) {
+  const [editModal, setEditModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
   const exportCSV = () => downloadCSV("multiplug-stock-report.csv", mpStockReport.map((r) => ({
     Product: r.productName, "Bought from": r.suppliers.join(", "), "Total purchased": r.totalPurchasedQty,
     "Total sold": r.totalSoldQty, "In stock": r.remainingQty, "Avg DP": r.avgDP.toFixed(2), "Auto TP": r.autoTP.toFixed(2),
@@ -2025,7 +2044,7 @@ function MpStockReportPage({ T, mpStockReport }) {
   const totalTP = mpStockReport.reduce((a, r) => a + r.totalTPValue, 0);
   return (
     <div>
-      <PageHeader T={T} title="Stock report" subtitle="TP is auto-calculated as DP + 40% margin"
+      <PageHeader T={T} title="Stock report" subtitle="TP is auto-suggested from DP using the margin % set in Settings"
         action={<button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportCSV}><Download size={14} /> Export CSV</button>} />
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
@@ -2034,7 +2053,7 @@ function MpStockReportPage({ T, mpStockReport }) {
               <th>Product</th><th>Bought from</th>
               <th style={{ textAlign: "right" }}>Purchased</th><th style={{ textAlign: "right" }}>Sold</th><th style={{ textAlign: "right" }}>In stock</th>
               <th style={{ textAlign: "right" }}>DP (avg)</th><th style={{ textAlign: "right" }}>TP (auto)</th>
-              <th style={{ textAlign: "right" }}>Total DP value</th><th style={{ textAlign: "right" }}>Total TP value</th>
+              <th style={{ textAlign: "right" }}>Total DP value</th><th style={{ textAlign: "right" }}>Total TP value</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -2049,9 +2068,13 @@ function MpStockReportPage({ T, mpStockReport }) {
                 <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.autoTP)}</td>
                 <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.totalDPValue)}</td>
                 <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.totalTPValue)}</td>
+                <td style={{ whiteSpace: "nowrap" }}>
+                  <button onClick={() => setEditModal(db.mpProducts.find((p) => p.id === r.productId))} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                  <button onClick={() => setConfirmDel(r)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                </td>
               </tr>
             ))}
-            {!mpStockReport.length && <tr><td colSpan={9} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No products yet — add one from Purchase entry.</td></tr>}
+            {!mpStockReport.length && <tr><td colSpan={10} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No products yet — add one from Purchase entry.</td></tr>}
           </tbody>
           {!!mpStockReport.length && (
             <tfoot>
@@ -2059,12 +2082,36 @@ function MpStockReportPage({ T, mpStockReport }) {
                 <td colSpan={7} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total stock value</td>
                 <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{fmtMoney(totalDP)}</td>
                 <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{fmtMoney(totalTP)}</td>
+                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
               </tr>
             </tfoot>
           )}
         </table>
       </Card>
+      {editModal && (
+        <ModalShell T={T} title="Edit product name" onClose={() => setEditModal(null)}>
+          <MpProductRenameForm T={T} product={editModal} onSave={(d) => { saveMpProduct(d); setEditModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && (
+        <ConfirmModal T={T} title="Delete product?"
+          message={confirmDel.totalPurchasedQty > 0 || confirmDel.totalSoldQty > 0
+            ? `${confirmDel.productName} already has purchase/sale history — deleting it will NOT delete those old entries, but the product name will disappear from new entry forms.`
+            : `Remove ${confirmDel.productName}?`}
+          onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteMpProduct(confirmDel.productId); setConfirmDel(null); }} />
+      )}
     </div>
+  );
+}
+
+function MpProductRenameForm({ T, product, onSave }) {
+  const [name, setName] = useState(product.name);
+  return (
+    <>
+      <Field T={T} label="Product name"><input className="lg-input" value={name} onChange={(e) => setName(e.target.value)} /></Field>
+      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!name} onClick={() => onSave({ ...product, name })}>Save</button>
+    </>
   );
 }
 
@@ -2193,7 +2240,7 @@ function MpSalesmenPage({ T, db, saveMpSalesman, deleteMpSalesman, mpCustomerBal
   const salesmanStats = (smId) => {
     const sales = db.mpSales.filter((s) => s.salesmanId === smId);
     const sm = db.mpSalesmen.find((x) => x.id === smId);
-    const pct = sm ? Number(sm.commissionPercent || 10) : 10;
+    const pct = sm ? Number(sm.commissionPercent || 0) : 0; // 0 until a commission % is set for this salesman
     const totalSold = sales.reduce((a, s) => a + Number(s.total), 0);
     const totalQty = sales.reduce((a, s) => a + Number(s.qty), 0);
     const totalDiscount = sales.reduce((a, s) => a + Number(s.discount || 0), 0);
@@ -2223,7 +2270,7 @@ function MpSalesmenPage({ T, db, saveMpSalesman, deleteMpSalesman, mpCustomerBal
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 14, cursor: "pointer" }} onClick={() => setExpanded(isOpen ? null : sm.id)}>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{sm.name}</div>
-                  <div style={{ fontSize: 12, color: T.slateLight }}>{sm.mobile} · Commission: {sm.commissionPercent || 10}%</div>
+                  <div style={{ fontSize: 12, color: T.slateLight }}>{sm.mobile} · Commission: {sm.commissionPercent ? `${sm.commissionPercent}%` : <span style={{ color: T.rule }}>Not set</span>}</div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
                   <div style={{ textAlign: "right" }}>
@@ -2271,19 +2318,19 @@ function MpSalesmenPage({ T, db, saveMpSalesman, deleteMpSalesman, mpCustomerBal
 function MpSalesmanModal({ T, initial, onClose, onSave }) {
   const [f, setF] = useState({
     id: initial.id, name: initial.name || "", mobile: initial.mobile || "",
-    commissionPercent: initial.commissionPercent || 10, status: initial.status || "Active",
+    commissionPercent: initial.commissionPercent ?? "", status: initial.status || "Active",
   });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   return (
     <ModalShell T={T} title={initial.id ? "Edit salesman" : "Add salesman"} onClose={onClose}>
       <Field T={T} label="Name"><input className="lg-input" value={f.name} onChange={set("name")} /></Field>
       <Field T={T} label="Mobile"><input className="lg-input" value={f.mobile} onChange={set("mobile")} /></Field>
-      <Field T={T} label="Commission % (on total sales value)"><input className="lg-input" type="number" value={f.commissionPercent} onChange={set("commissionPercent")} /></Field>
+      <Field T={T} label="Commission % (on total sales value) — set this yourself, no default"><input className="lg-input" type="number" placeholder="e.g. 10" value={f.commissionPercent} onChange={set("commissionPercent")} /></Field>
       <Field T={T} label="Status">
         <select className="lg-input" value={f.status} onChange={set("status")}><option>Active</option><option>Inactive</option></select>
       </Field>
       <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
-        disabled={!f.name} onClick={() => onSave({ ...f, commissionPercent: Number(f.commissionPercent) })}>Save salesman</button>
+        disabled={!f.name || f.commissionPercent === ""} onClick={() => onSave({ ...f, commissionPercent: Number(f.commissionPercent) })}>Save salesman</button>
     </ModalShell>
   );
 }
@@ -2623,19 +2670,25 @@ function MpSupplierPaymentForm({ T, db, onSave }) {
 
 function MpSettingsPage({ T, db, saveMpSettings }) {
   const [openingCash, setOpeningCash] = useState(db.mpSettings.openingCash);
-  const [marginPercent, setMarginPercent] = useState(db.mpSettings.marginPercent ?? 40);
+  const [marginPercent, setMarginPercent] = useState(db.mpSettings.marginPercent ?? "");
+  const notSetYet = db.mpSettings.marginPercent === null || db.mpSettings.marginPercent === undefined || db.mpSettings.marginPercent === "";
   return (
     <div>
       <Card T={T} style={{ maxWidth: 420 }}>
         <Field T={T} label="Multi Plug opening cash balance"><input className="lg-input" type="number" value={openingCash} onChange={(e) => setOpeningCash(e.target.value)} /></Field>
-        <Field T={T} label="Default margin % (used to auto-suggest TP from DP)">
-          <input className="lg-input" type="number" value={marginPercent} onChange={(e) => setMarginPercent(e.target.value)} />
+        <Field T={T} label="Default margin % (used to auto-suggest TP from DP) — set this yourself, no default">
+          <input className="lg-input" type="number" placeholder="e.g. 40" value={marginPercent} onChange={(e) => setMarginPercent(e.target.value)} />
         </Field>
-        <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 12, marginTop: -6 }}>
+        {notSetYet && (
+          <div style={{ fontSize: 11.5, color: T.rule, marginBottom: 12, marginTop: -6, fontWeight: 600 }}>
+            এখনো সেট করা হয়নি — এখন TP = DP (কোনো margin ছাড়াই) দেখাচ্ছে, যতক্ষণ না তুমি এখানে একটা % দিয়ে Save করছো।
+          </div>
+        )}
+        <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 12, marginTop: notSetYet ? 0 : -6 }}>
           এই % দিয়ে Stock Report আর Sales entry-তে TP (বিক্রয়মূল্য) অটোমেটিক suggest হয় (DP + এই %) — এটা শুধু একটা suggestion, প্রতিটা বিক্রির সময় চাইলে TP নিজে বদলে দিতে পারবে।
         </div>
         <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
-          onClick={() => saveMpSettings({ openingCash: Number(openingCash), marginPercent: Number(marginPercent) })}>Save</button>
+          disabled={marginPercent === ""} onClick={() => saveMpSettings({ openingCash: Number(openingCash), marginPercent: Number(marginPercent) })}>Save</button>
       </Card>
       <div style={{ fontSize: 12, color: T.slateLight, marginTop: 14, maxWidth: 420 }}>
         Multi Plug has its own customers, suppliers, products and cash — completely separate from the main ARHAM TRADERS ledger. Its cash-in-hand also appears as a card on the main Dashboard.
