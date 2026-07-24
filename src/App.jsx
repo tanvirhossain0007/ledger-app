@@ -5,10 +5,20 @@ import {
   TrendingUp, FileBarChart, Settings, LogOut, Plus, Search, Pencil,
   Trash2, X, Printer, Download, Sun, Moon, ChevronLeft, ArrowUpRight,
   ArrowDownRight, CircleDollarSign, ShieldCheck, Menu, Building2, Truck, CreditCard, Banknote,
+  Plug, UserCog, Boxes,
 } from "lucide-react";
 
 const CUR = "BDT";
 const TABLE_KEYS = ["customers", "sales", "payments", "expenses", "suppliers", "purchases", "supplierPayments"];
+const MP_TABLE_KEYS = ["mpCustomers", "mpSuppliers", "mpSalesmen", "mpProducts", "mpPurchases", "mpSales", "mpPayments", "mpSupplierPayments"];
+const ALL_TABLE_KEYS = [...TABLE_KEYS, ...MP_TABLE_KEYS];
+// Maps a JS state key to its real Supabase table name (Multi Plug tables use an mp_ prefix in the DB).
+const TABLE_NAME = {
+  mpCustomers: "mp_customers", mpSuppliers: "mp_suppliers", mpSalesmen: "mp_salesmen",
+  mpProducts: "mp_products", mpPurchases: "mp_purchases", mpSales: "mp_sales",
+  mpPayments: "mp_payments", mpSupplierPayments: "mp_supplier_payments",
+};
+const tableNameFor = (key) => TABLE_NAME[key] || key;
 
 const TOKENS = {
   ink: "#16283D",
@@ -113,18 +123,32 @@ const emptyDB = () => ({
   purchases: [],
   supplierPayments: [],
   settings: { companyName: "Amber Trading Co.", openingCash: 50000, invoiceSeq: 1, purchaseInvoiceSeq: 1 },
+  mpCustomers: [],
+  mpSuppliers: [],
+  mpSalesmen: [],
+  mpProducts: [],
+  mpPurchases: [],
+  mpSales: [],
+  mpPayments: [],
+  mpSupplierPayments: [],
+  mpSettings: { openingCash: 0, purchaseInvoiceSeq: 1, saleInvoiceSeq: 1, marginPercent: 40 },
 });
 
 async function fetchAllTables() {
-  const results = await Promise.all(TABLE_KEYS.map((t) => supabase.from(t).select("*")));
+  const results = await Promise.all(ALL_TABLE_KEYS.map((t) => supabase.from(tableNameFor(t)).select("*")));
   const errors = results.map((r) => r.error).filter(Boolean);
   if (errors.length) throw errors[0];
   const next = emptyDB();
-  TABLE_KEYS.forEach((key, i) => { next[key] = results[i].data || []; });
+  ALL_TABLE_KEYS.forEach((key, i) => { next[key] = results[i].data || []; });
   const settingsRes = await supabase.from("settings").select("*").eq("id", 1).single();
   if (settingsRes.data) {
     const { id, ...rest } = settingsRes.data;
     next.settings = { ...next.settings, ...rest };
+  }
+  const mpSettingsRes = await supabase.from("mp_settings").select("*").eq("id", 1).single();
+  if (mpSettingsRes.data) {
+    const { id, ...rest } = mpSettingsRes.data;
+    next.mpSettings = { ...next.mpSettings, ...rest };
   }
   return next;
 }
@@ -133,7 +157,7 @@ async function fetchAllTables() {
 // instead of re-uploading the entire database on every save.
 async function syncToSupabase(prev, next) {
   const jobs = [];
-  for (const key of TABLE_KEYS) {
+  for (const key of ALL_TABLE_KEYS) {
     const prevRows = prev[key] || [];
     const nextRows = next[key] || [];
     if (prevRows === nextRows) continue;
@@ -143,11 +167,15 @@ async function syncToSupabase(prev, next) {
       const old = prevRows.find((p) => p.id === r.id);
       return !old || JSON.stringify(old) !== JSON.stringify(r);
     });
-    if (toDelete.length) jobs.push(supabase.from(key).delete().in("id", toDelete));
-    if (toUpsert.length) jobs.push(supabase.from(key).upsert(toUpsert));
+    const tableName = tableNameFor(key);
+    if (toDelete.length) jobs.push(supabase.from(tableName).delete().in("id", toDelete));
+    if (toUpsert.length) jobs.push(supabase.from(tableName).upsert(toUpsert));
   }
   if (prev.settings !== next.settings) {
     jobs.push(supabase.from("settings").upsert({ id: 1, ...next.settings }));
+  }
+  if (prev.mpSettings !== next.mpSettings) {
+    jobs.push(supabase.from("mp_settings").upsert({ id: 1, ...next.mpSettings }));
   }
   const results = await Promise.all(jobs);
   const failed = results.find((r) => r && r.error);
@@ -274,6 +302,76 @@ export default function App() {
       monthProfit: monthSales - monthExpenses,
     };
   }, [db, customerBalance, supplierBalance]);
+
+  const mpCustomerBalance = useCallback(
+    (custId) => {
+      const cust = db.mpCustomers.find((c) => c.id === custId);
+      if (!cust) return 0;
+      const sold = db.mpSales.filter((s) => s.customerId === custId).reduce((a, s) => a + Number(s.total), 0);
+      const paid = db.mpPayments.filter((p) => p.customerId === custId).reduce((a, p) => a + Number(p.amount), 0);
+      return Number(cust.openingBalance || 0) + sold - paid;
+    },
+    [db]
+  );
+
+  const mpSupplierBalance = useCallback(
+    (supId) => {
+      const sup = db.mpSuppliers.find((s) => s.id === supId);
+      if (!sup) return 0;
+      const bought = db.mpPurchases.filter((p) => p.supplierId === supId).reduce((a, p) => a + Number(p.qty) * Number(p.dp), 0);
+      const paid = db.mpSupplierPayments.filter((p) => p.supplierId === supId).reduce((a, p) => a + Number(p.amount), 0);
+      return Number(sup.openingBalance || 0) + bought - paid;
+    },
+    [db]
+  );
+
+  // One row per product: total bought/sold, remaining stock, weighted-average DP,
+  // auto TP (DP + your chosen margin %, set in Multi Plug Settings), and total DP/TP value in stock.
+  const mpStockReport = useMemo(() => {
+    const marginPercent = Number(db.mpSettings.marginPercent ?? 40);
+    return db.mpProducts.map((prod) => {
+      const purchases = db.mpPurchases.filter((p) => p.productId === prod.id);
+      const sales = db.mpSales.filter((s) => s.productId === prod.id);
+      const totalPurchasedQty = purchases.reduce((a, p) => a + Number(p.qty), 0);
+      const totalSoldQty = sales.reduce((a, s) => a + Number(s.qty), 0);
+      const remainingQty = totalPurchasedQty - totalSoldQty;
+      const totalPurchaseValue = purchases.reduce((a, p) => a + Number(p.qty) * Number(p.dp), 0);
+      const avgDP = totalPurchasedQty > 0 ? totalPurchaseValue / totalPurchasedQty : 0;
+      const autoTP = avgDP * (1 + marginPercent / 100);
+      const suppliers = Array.from(new Set(purchases.map((p) => {
+        const sup = db.mpSuppliers.find((s) => s.id === p.supplierId);
+        return sup ? sup.name : null;
+      }).filter(Boolean)));
+      return {
+        productId: prod.id, productName: prod.name, suppliers,
+        totalPurchasedQty, totalSoldQty, remainingQty,
+        avgDP, autoTP,
+        totalDPValue: remainingQty * avgDP,
+        totalTPValue: remainingQty * autoTP,
+      };
+    });
+  }, [db]);
+
+  const mpTotals = useMemo(() => {
+    const totalSales = db.mpSales.reduce((a, s) => a + Number(s.total), 0);
+    const totalCollections = db.mpPayments.reduce((a, p) => a + Number(p.amount), 0);
+    const totalPurchaseValue = db.mpPurchases.reduce((a, p) => a + Number(p.qty) * Number(p.dp), 0);
+    const totalSupplierPayments = db.mpSupplierPayments.reduce((a, p) => a + Number(p.amount), 0);
+    const totalPayable = db.mpSuppliers.reduce((a, s) => a + mpSupplierBalance(s.id), 0);
+    const totalOutstanding = db.mpCustomers.reduce((a, c) => a + mpCustomerBalance(c.id), 0);
+    const cashInHand = Number(db.mpSettings.openingCash || 0) + totalCollections - totalSupplierPayments;
+    const totalStockDPValue = mpStockReport.reduce((a, r) => a + r.totalDPValue, 0);
+    const totalStockTPValue = mpStockReport.reduce((a, r) => a + r.totalTPValue, 0);
+    const totalCommission = db.mpSales.reduce((a, s) => {
+      const sm = db.mpSalesmen.find((x) => x.id === s.salesmanId);
+      const pct = sm ? Number(sm.commissionPercent || 10) : 10;
+      return a + Number(s.total) * (pct / 100);
+    }, 0);
+    return {
+      totalSales, totalCollections, totalPurchaseValue, totalSupplierPayments, totalPayable,
+      totalOutstanding, cashInHand, totalStockDPValue, totalStockTPValue, totalCommission,
+    };
+  }, [db, mpSupplierBalance, mpCustomerBalance, mpStockReport]);
 
   const monthlyChartData = useMemo(() => {
     const map = {};
@@ -459,6 +557,82 @@ export default function App() {
     notify("Settings saved");
   };
 
+  // ---------- Multi Plug module ----------
+  // Generic helper: saves/updates a row in any mp_* collection by id.
+  const mpSave = (key, prefix, data, msg) => {
+    updateDb((prev) => {
+      const list = prev[key];
+      const exists = list.some((r) => r.id === data.id);
+      const next = exists ? list.map((r) => (r.id === data.id ? data : r)) : [...list, { ...data, id: uid(prefix) }];
+      return { ...prev, [key]: next };
+    });
+    notify(msg);
+  };
+  const mpDelete = (key, id, msg) => {
+    updateDb((prev) => ({ ...prev, [key]: prev[key].filter((r) => r.id !== id) }));
+    notify(msg, "danger");
+  };
+
+  const saveMpCustomer = (data) => mpSave("mpCustomers", "MPCUS", data, "Multi Plug customer saved");
+  const deleteMpCustomer = (id) => mpDelete("mpCustomers", id, "Customer deleted");
+
+  const saveMpSupplier = (data) => mpSave("mpSuppliers", "MPSUP", data, "Multi Plug supplier saved");
+  const deleteMpSupplier = (id) => mpDelete("mpSuppliers", id, "Supplier deleted");
+
+  const saveMpSalesman = (data) => mpSave("mpSalesmen", "MPSM", data, "Salesman saved");
+  const deleteMpSalesman = (id) => mpDelete("mpSalesmen", id, "Salesman deleted");
+
+  const saveMpProduct = (data) => mpSave("mpProducts", "MPPRD", data, "Product saved");
+  const deleteMpProduct = (id) => mpDelete("mpProducts", id, "Product deleted");
+
+  const nextMpPurchaseInvoiceNo = () => `MPP-${String(db.mpSettings.purchaseInvoiceSeq).padStart(4, "0")}`;
+  const nextMpSaleInvoiceNo = () => `MPS-${String(db.mpSettings.saleInvoiceSeq).padStart(4, "0")}`;
+
+  const saveMpPurchase = (data) => {
+    updateDb((prev) => {
+      const exists = prev.mpPurchases.some((p) => p.id === data.id);
+      let mpPurchases, mpSettings = prev.mpSettings;
+      if (exists) {
+        mpPurchases = prev.mpPurchases.map((p) => (p.id === data.id ? data : p));
+      } else {
+        const invoiceNo = nextMpPurchaseInvoiceNo();
+        mpPurchases = [...prev.mpPurchases, { ...data, id: uid("MPPUR"), invoiceNo }];
+        mpSettings = { ...prev.mpSettings, purchaseInvoiceSeq: prev.mpSettings.purchaseInvoiceSeq + 1 };
+      }
+      return { ...prev, mpPurchases, mpSettings };
+    });
+    notify("Purchase recorded — stock updated");
+  };
+  const deleteMpPurchase = (id) => mpDelete("mpPurchases", id, "Purchase entry removed");
+
+  const saveMpSale = (data) => {
+    updateDb((prev) => {
+      const exists = prev.mpSales.some((s) => s.id === data.id);
+      let mpSales, mpSettings = prev.mpSettings;
+      if (exists) {
+        mpSales = prev.mpSales.map((s) => (s.id === data.id ? data : s));
+      } else {
+        const invoiceNo = nextMpSaleInvoiceNo();
+        mpSales = [...prev.mpSales, { ...data, id: uid("MPSAL"), invoiceNo }];
+        mpSettings = { ...prev.mpSettings, saleInvoiceSeq: prev.mpSettings.saleInvoiceSeq + 1 };
+      }
+      return { ...prev, mpSales, mpSettings };
+    });
+    notify("Sale recorded — stock and salesman commission updated");
+  };
+  const deleteMpSale = (id) => mpDelete("mpSales", id, "Sale entry removed");
+
+  const saveMpPayment = (data) => mpSave("mpPayments", "MPPAY", data, "Payment recorded");
+  const deleteMpPayment = (id) => mpDelete("mpPayments", id, "Payment removed");
+
+  const saveMpSupplierPayment = (data) => mpSave("mpSupplierPayments", "MPSPAY", data, "Payment to supplier recorded");
+  const deleteMpSupplierPayment = (id) => mpDelete("mpSupplierPayments", id, "Supplier payment removed");
+
+  const saveMpSettings = (data) => {
+    updateDb((prev) => ({ ...prev, mpSettings: { ...prev.mpSettings, ...data } }));
+    notify("Multi Plug settings saved");
+  };
+
   // ---------- auth ----------
   const loginAsAdmin = async (u, p) => {
     const { error } = await supabase.auth.signInWithPassword({ email: u, password: p });
@@ -558,6 +732,17 @@ export default function App() {
           savePurchase={savePurchase} deletePurchase={deletePurchase}
           saveSupplierPayment={saveSupplierPayment} deleteSupplierPayment={deleteSupplierPayment}
           saveSettings={saveSettings}
+          mpTotals={mpTotals} mpStockReport={mpStockReport} mpCustomerBalance={mpCustomerBalance} mpSupplierBalance={mpSupplierBalance}
+          nextMpPurchaseInvoiceNo={nextMpPurchaseInvoiceNo} nextMpSaleInvoiceNo={nextMpSaleInvoiceNo}
+          saveMpCustomer={saveMpCustomer} deleteMpCustomer={deleteMpCustomer}
+          saveMpSupplier={saveMpSupplier} deleteMpSupplier={deleteMpSupplier}
+          saveMpSalesman={saveMpSalesman} deleteMpSalesman={deleteMpSalesman}
+          saveMpProduct={saveMpProduct} deleteMpProduct={deleteMpProduct}
+          saveMpPurchase={saveMpPurchase} deleteMpPurchase={deleteMpPurchase}
+          saveMpSale={saveMpSale} deleteMpSale={deleteMpSale}
+          saveMpPayment={saveMpPayment} deleteMpPayment={deleteMpPayment}
+          saveMpSupplierPayment={saveMpSupplierPayment} deleteMpSupplierPayment={deleteMpSupplierPayment}
+          saveMpSettings={saveMpSettings}
         />
       ) : (
         <CustomerShell
@@ -811,6 +996,7 @@ function AdminShell(props) {
     { key: "expenses", label: "Expenses", icon: Receipt, color: "#B23A2E", frontColor: "#8FC1E8" },
     { key: "cashflow", label: "Cash flow", icon: TrendingUp, color: "#2E8B8B", frontColor: "#E29BD1" },
     { key: "reports", label: "Reports", icon: FileBarChart, color: "#4C5B8A", frontColor: "#F0C96B" },
+    { key: "multiplug", label: "Multi Plug", icon: Plug, color: "#1F7A5C", frontColor: "#F0A868" },
     { key: "settings", label: "Settings", icon: Settings, color: "#7A7A7A", frontColor: "#A8E6D9" },
   ];
   return (
@@ -825,12 +1011,13 @@ function AdminShell(props) {
       {view === "expenses" && <ExpensesPage {...props} />}
       {view === "cashflow" && <CashFlowPage {...props} />}
       {view === "reports" && <ReportsPage {...props} />}
+      {view === "multiplug" && <MultiPlugPage {...props} />}
       {view === "settings" && <SettingsPage {...props} />}
     </Shell>
   );
 }
 
-function AdminDashboard({ T, db, totals, monthlyChartData, cashFlowSeries, topCustomers, outstandingCustomers }) {
+function AdminDashboard({ T, db, totals, monthlyChartData, cashFlowSeries, topCustomers, outstandingCustomers, mpTotals }) {
   const RC = useRecharts();
   const cards = [
     { label: "Total customers", value: db.customers.length, tone: "", accent: "#B8912F" },
@@ -844,6 +1031,7 @@ function AdminDashboard({ T, db, totals, monthlyChartData, cashFlowSeries, topCu
     { label: "Net cash flow", value: fmtMoney(totals.netCashFlow), tone: totals.netCashFlow >= 0 ? "good" : "danger", accent: "#A34C6B" },
     { label: "Monthly profit / loss", value: fmtMoney(totals.monthProfit), tone: totals.monthProfit >= 0 ? "good" : "danger", accent: "#1F7A5C" },
     { label: "Accounts payable", value: fmtMoney(totals.totalPayable), tone: totals.totalPayable > 0 ? "danger" : "", accent: "#8A5A2B" },
+    { label: "Multi Plug — cash in hand", value: fmtMoney(mpTotals.cashInHand), tone: "", accent: "#1F7A5C" },
   ];
   return (
     <div>
@@ -1741,6 +1929,717 @@ function ReportsPage({ T, db, customerBalance, supplierBalance }) {
         })}
       </div>
       <div style={{ fontSize: 12, color: T.slateLight, marginTop: 14 }}>For a printable PDF version of any customer statement, open Statements and use Print.</div>
+    </div>
+  );
+}
+
+// ================= MULTI PLUG MODULE =================
+const MP_SUBTABS = [
+  { key: "dashboard", label: "Dashboard" },
+  { key: "stock", label: "Stock Report" },
+  { key: "purchase", label: "Purchase" },
+  { key: "sales", label: "Sales" },
+  { key: "salesmen", label: "Salesmen" },
+  { key: "customers", label: "Customers" },
+  { key: "suppliers", label: "Suppliers" },
+  { key: "payments", label: "Cash Receiving" },
+  { key: "supplierPayments", label: "Supplier Payments" },
+  { key: "settings", label: "Settings" },
+];
+
+function MultiPlugPage(props) {
+  const { T } = props;
+  const [sub, setSub] = useState("dashboard");
+  return (
+    <div>
+      <PageHeader T={T} title="Multi Plug" subtitle="A separate product line — its own stock, purchases, sales and salesmen" />
+      <div style={{ display: "flex", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
+        {MP_SUBTABS.map((t) => (
+          <button key={t.key} onClick={() => setSub(t.key)} className="lg-btn"
+            style={{
+              background: sub === t.key ? T.ink : "transparent", color: sub === t.key ? "#fff" : T.slate,
+              border: `1px solid ${sub === t.key ? T.ink : T.line}`, padding: "7px 14px", fontSize: 12.5,
+            }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {sub === "dashboard" && <MpDashboard {...props} />}
+      {sub === "stock" && <MpStockReportPage {...props} />}
+      {sub === "purchase" && <MpPurchasePage {...props} />}
+      {sub === "sales" && <MpSalesPage {...props} />}
+      {sub === "salesmen" && <MpSalesmenPage {...props} />}
+      {sub === "customers" && <MpCustomersPage {...props} />}
+      {sub === "suppliers" && <MpSuppliersPage {...props} />}
+      {sub === "payments" && <MpPaymentsPage {...props} />}
+      {sub === "supplierPayments" && <MpSupplierPaymentsPage {...props} />}
+      {sub === "settings" && <MpSettingsPage {...props} />}
+    </div>
+  );
+}
+
+function MpDashboard({ T, db, mpTotals, mpStockReport }) {
+  const cards = [
+    { label: "Total products", value: db.mpProducts.length, accent: "#B8912F" },
+    { label: "Total sales", value: fmtMoney(mpTotals.totalSales), accent: "#3B6EA5" },
+    { label: "Total collections", value: fmtMoney(mpTotals.totalCollections), tone: "good", accent: "#2F6B4F" },
+    { label: "Total outstanding (customers)", value: fmtMoney(mpTotals.totalOutstanding), tone: "danger", accent: "#B23A2E" },
+    { label: "Accounts payable (suppliers)", value: fmtMoney(mpTotals.totalPayable), tone: mpTotals.totalPayable > 0 ? "danger" : "", accent: "#8A5A2B" },
+    { label: "Cash in hand", value: fmtMoney(mpTotals.cashInHand), accent: "#4C5B8A" },
+    { label: "Stock value (at DP)", value: fmtMoney(mpTotals.totalStockDPValue), accent: "#6B4C9A" },
+    { label: "Stock value (at TP)", value: fmtMoney(mpTotals.totalStockTPValue), tone: "good", accent: "#2E8B8B" },
+    { label: "Total salesman commission", value: fmtMoney(mpTotals.totalCommission), accent: "#A34C6B" },
+  ];
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px,1fr))", gap: 12, marginBottom: 20 }}>
+        {cards.map((c) => <StatCard key={c.label} T={T} {...c} />)}
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Product</th><th style={{ textAlign: "right" }}>In stock</th><th style={{ textAlign: "right" }}>Avg DP</th><th style={{ textAlign: "right" }}>Auto TP</th></tr></thead>
+          <tbody>
+            {mpStockReport.slice(0, 8).map((r) => (
+              <tr key={r.productId}>
+                <td>{r.productName}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{r.remainingQty}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.avgDP)}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(r.autoTP)}</td>
+              </tr>
+            ))}
+            {!mpStockReport.length && <tr><td colSpan={4} style={{ textAlign: "center", padding: 20, color: T.slateLight }}>No products yet.</td></tr>}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+function MpStockReportPage({ T, mpStockReport }) {
+  const exportCSV = () => downloadCSV("multiplug-stock-report.csv", mpStockReport.map((r) => ({
+    Product: r.productName, "Bought from": r.suppliers.join(", "), "Total purchased": r.totalPurchasedQty,
+    "Total sold": r.totalSoldQty, "In stock": r.remainingQty, "Avg DP": r.avgDP.toFixed(2), "Auto TP": r.autoTP.toFixed(2),
+    "Total DP value": r.totalDPValue.toFixed(2), "Total TP value": r.totalTPValue.toFixed(2),
+  })));
+  const totalDP = mpStockReport.reduce((a, r) => a + r.totalDPValue, 0);
+  const totalTP = mpStockReport.reduce((a, r) => a + r.totalTPValue, 0);
+  return (
+    <div>
+      <PageHeader T={T} title="Stock report" subtitle="TP is auto-calculated as DP + 40% margin"
+        action={<button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportCSV}><Download size={14} /> Export CSV</button>} />
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead>
+            <tr>
+              <th>Product</th><th>Bought from</th>
+              <th style={{ textAlign: "right" }}>Purchased</th><th style={{ textAlign: "right" }}>Sold</th><th style={{ textAlign: "right" }}>In stock</th>
+              <th style={{ textAlign: "right" }}>DP (avg)</th><th style={{ textAlign: "right" }}>TP (auto)</th>
+              <th style={{ textAlign: "right" }}>Total DP value</th><th style={{ textAlign: "right" }}>Total TP value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {mpStockReport.map((r) => (
+              <tr key={r.productId}>
+                <td style={{ fontWeight: 600 }}>{r.productName}</td>
+                <td style={{ fontSize: 12, color: T.slateLight }}>{r.suppliers.join(", ") || "—"}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{r.totalPurchasedQty}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{r.totalSoldQty}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, color: r.remainingQty > 0 ? T.green : T.rule }}>{r.remainingQty}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.avgDP)}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.autoTP)}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.totalDPValue)}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.totalTPValue)}</td>
+              </tr>
+            ))}
+            {!mpStockReport.length && <tr><td colSpan={9} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No products yet — add one from Purchase entry.</td></tr>}
+          </tbody>
+          {!!mpStockReport.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={7} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total stock value</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{fmtMoney(totalDP)}</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{fmtMoney(totalTP)}</td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+function MpCustomersPage({ T, db, saveMpCustomer, deleteMpCustomer, mpCustomerBalance }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const totalBalance = db.mpCustomers.reduce((a, c) => a + mpCustomerBalance(c.id), 0);
+  return (
+    <div>
+      <PageHeader T={T} title="Multi Plug customers" subtitle={`${db.mpCustomers.length} total`}
+        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add customer</button>} />
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Name</th><th>Mobile</th><th>Status</th><th>Balance</th><th></th></tr></thead>
+          <tbody>
+            {db.mpCustomers.map((c) => {
+              const bal = mpCustomerBalance(c.id);
+              return (
+                <tr key={c.id}>
+                  <td style={{ fontWeight: 600 }}>{c.name}</td>
+                  <td className="lg-mono">{c.mobile}</td>
+                  <td><span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: c.status === "Active" ? T.greenBg : T.dangerBg, color: c.status === "Active" ? T.green : T.rule, fontWeight: 600 }}>{c.status}</span></td>
+                  <td className="lg-mono" style={{ color: bal > 0 ? T.rule : T.green, fontWeight: 600 }}>{fmtMoney(bal)}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setModal(c)} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                    <button onClick={() => setConfirmDel(c)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!db.mpCustomers.length && <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No customers yet.</td></tr>}
+          </tbody>
+          {!!db.mpCustomers.length && (
+            <tfoot><tr>
+              <td colSpan={3} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total balance</td>
+              <td className="lg-mono" style={{ fontWeight: 700, color: totalBalance > 0 ? T.rule : T.green, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalBalance)}</td>
+              <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+            </tr></tfoot>
+          )}
+        </table>
+      </Card>
+      {modal && (
+        <ModalShell T={T} title={modal.id ? "Edit customer" : "Add customer"} onClose={() => setModal(null)}>
+          <MpPersonForm T={T} initial={modal} onSave={(d) => { saveMpCustomer(d); setModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && <ConfirmModal T={T} title="Delete customer?" message={`Remove ${confirmDel.name}?`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteMpCustomer(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function MpSuppliersPage({ T, db, saveMpSupplier, deleteMpSupplier, mpSupplierBalance }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const totalPayable = db.mpSuppliers.reduce((a, s) => a + mpSupplierBalance(s.id), 0);
+  return (
+    <div>
+      <PageHeader T={T} title="Multi Plug suppliers" subtitle={`${db.mpSuppliers.length} total`}
+        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add supplier</button>} />
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Name</th><th>Mobile</th><th>Status</th><th>Payable</th><th></th></tr></thead>
+          <tbody>
+            {db.mpSuppliers.map((s) => {
+              const bal = mpSupplierBalance(s.id);
+              return (
+                <tr key={s.id}>
+                  <td style={{ fontWeight: 600 }}>{s.name}</td>
+                  <td className="lg-mono">{s.mobile}</td>
+                  <td><span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: s.status === "Active" ? T.greenBg : T.dangerBg, color: s.status === "Active" ? T.green : T.rule, fontWeight: 600 }}>{s.status}</span></td>
+                  <td className="lg-mono" style={{ color: bal > 0 ? T.rule : T.green, fontWeight: 600 }}>{fmtMoney(bal)}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setModal(s)} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                    <button onClick={() => setConfirmDel(s)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!db.mpSuppliers.length && <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No suppliers yet.</td></tr>}
+          </tbody>
+          {!!db.mpSuppliers.length && (
+            <tfoot><tr>
+              <td colSpan={3} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total payable</td>
+              <td className="lg-mono" style={{ fontWeight: 700, color: totalPayable > 0 ? T.rule : T.green, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalPayable)}</td>
+              <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+            </tr></tfoot>
+          )}
+        </table>
+      </Card>
+      {modal && (
+        <ModalShell T={T} title={modal.id ? "Edit supplier" : "Add supplier"} onClose={() => setModal(null)}>
+          <MpPersonForm T={T} initial={modal} onSave={(d) => { saveMpSupplier(d); setModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && <ConfirmModal T={T} title="Delete supplier?" message={`Remove ${confirmDel.name}?`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteMpSupplier(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function MpPersonForm({ T, initial, onSave }) {
+  const [f, setF] = useState({
+    id: initial.id, name: initial.name || "", mobile: initial.mobile || "", address: initial.address || "",
+    openingBalance: initial.openingBalance || 0, status: initial.status || "Active",
+  });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <>
+      <Field T={T} label="Name"><input className="lg-input" value={f.name} onChange={set("name")} /></Field>
+      <Field T={T} label="Mobile"><input className="lg-input" value={f.mobile} onChange={set("mobile")} /></Field>
+      <Field T={T} label="Address"><input className="lg-input" value={f.address} onChange={set("address")} /></Field>
+      <Field T={T} label="Opening balance"><input className="lg-input" type="number" value={f.openingBalance} onChange={set("openingBalance")} /></Field>
+      <Field T={T} label="Status">
+        <select className="lg-input" value={f.status} onChange={set("status")}><option>Active</option><option>Inactive</option></select>
+      </Field>
+      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!f.name} onClick={() => onSave(f)}>Save</button>
+    </>
+  );
+}
+
+function MpSalesmenPage({ T, db, saveMpSalesman, deleteMpSalesman, mpCustomerBalance }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+
+  const salesmanStats = (smId) => {
+    const sales = db.mpSales.filter((s) => s.salesmanId === smId);
+    const sm = db.mpSalesmen.find((x) => x.id === smId);
+    const pct = sm ? Number(sm.commissionPercent || 10) : 10;
+    const totalSold = sales.reduce((a, s) => a + Number(s.total), 0);
+    const totalQty = sales.reduce((a, s) => a + Number(s.qty), 0);
+    const totalDiscount = sales.reduce((a, s) => a + Number(s.discount || 0), 0);
+    const commission = totalSold * (pct / 100);
+    const byCustomer = {};
+    sales.forEach((s) => {
+      const cust = db.mpCustomers.find((c) => c.id === s.customerId);
+      const name = cust ? cust.name : "—";
+      if (!byCustomer[name]) byCustomer[name] = { qty: 0, total: 0, discount: 0, customerId: s.customerId };
+      byCustomer[name].qty += Number(s.qty);
+      byCustomer[name].total += Number(s.total);
+      byCustomer[name].discount += Number(s.discount || 0);
+    });
+    return { totalSold, totalQty, totalDiscount, commission, byCustomer };
+  };
+
+  return (
+    <div>
+      <PageHeader T={T} title="Salesmen" subtitle="Sales, discounts given, and commission per salesman"
+        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add salesman</button>} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {db.mpSalesmen.map((sm) => {
+          const stats = salesmanStats(sm.id);
+          const isOpen = expanded === sm.id;
+          return (
+            <Card key={sm.id} T={T} style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 14, cursor: "pointer" }} onClick={() => setExpanded(isOpen ? null : sm.id)}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{sm.name}</div>
+                  <div style={{ fontSize: 12, color: T.slateLight }}>{sm.mobile} · Commission: {sm.commissionPercent || 10}%</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 11, color: T.slate }}>Total sold</div>
+                    <div className="lg-mono" style={{ fontWeight: 700 }}>{fmtMoney(stats.totalSold)}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 11, color: T.slate }}>Commission</div>
+                    <div className="lg-mono" style={{ fontWeight: 700, color: T.green }}>{fmtMoney(stats.commission)}</div>
+                  </div>
+                  <button onClick={(e) => { e.stopPropagation(); setModal(sm); }} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); setConfirmDel(sm); }} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                </div>
+              </div>
+              {isOpen && (
+                <div style={{ borderTop: `1px solid ${T.line}`, padding: "0 14px 14px" }}>
+                  <table className="lg-table">
+                    <thead><tr><th>Customer</th><th style={{ textAlign: "right" }}>Qty sold</th><th style={{ textAlign: "right" }}>Discount given</th><th style={{ textAlign: "right" }}>Sales value</th><th style={{ textAlign: "right" }}>Customer due</th></tr></thead>
+                    <tbody>
+                      {Object.entries(stats.byCustomer).map(([name, v]) => (
+                        <tr key={name}>
+                          <td>{name}</td>
+                          <td className="lg-mono" style={{ textAlign: "right" }}>{v.qty}</td>
+                          <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(v.discount)}</td>
+                          <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(v.total)}</td>
+                          <td className="lg-mono" style={{ textAlign: "right", color: T.rule }}>{fmtMoney(mpCustomerBalance(v.customerId))}</td>
+                        </tr>
+                      ))}
+                      {!Object.keys(stats.byCustomer).length && <tr><td colSpan={5} style={{ textAlign: "center", padding: 14, color: T.slateLight }}>No sales yet.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          );
+        })}
+        {!db.mpSalesmen.length && <div style={{ textAlign: "center", padding: 30, color: T.slateLight }}>No salesmen added yet.</div>}
+      </div>
+      {modal && <MpSalesmanModal T={T} initial={modal} onClose={() => setModal(null)} onSave={(d) => { saveMpSalesman(d); setModal(null); }} />}
+      {confirmDel && <ConfirmModal T={T} title="Delete salesman?" message={`Remove ${confirmDel.name}?`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteMpSalesman(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function MpSalesmanModal({ T, initial, onClose, onSave }) {
+  const [f, setF] = useState({
+    id: initial.id, name: initial.name || "", mobile: initial.mobile || "",
+    commissionPercent: initial.commissionPercent || 10, status: initial.status || "Active",
+  });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <ModalShell T={T} title={initial.id ? "Edit salesman" : "Add salesman"} onClose={onClose}>
+      <Field T={T} label="Name"><input className="lg-input" value={f.name} onChange={set("name")} /></Field>
+      <Field T={T} label="Mobile"><input className="lg-input" value={f.mobile} onChange={set("mobile")} /></Field>
+      <Field T={T} label="Commission % (on total sales value)"><input className="lg-input" type="number" value={f.commissionPercent} onChange={set("commissionPercent")} /></Field>
+      <Field T={T} label="Status">
+        <select className="lg-input" value={f.status} onChange={set("status")}><option>Active</option><option>Inactive</option></select>
+      </Field>
+      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!f.name} onClick={() => onSave({ ...f, commissionPercent: Number(f.commissionPercent) })}>Save salesman</button>
+    </ModalShell>
+  );
+}
+
+function MpPurchasePage({ T, db, saveMpPurchase, deleteMpPurchase, saveMpProduct, nextMpPurchaseInvoiceNo }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const rows = [...db.mpPurchases].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return (
+    <div>
+      <PageHeader T={T} title="Purchase entry" subtitle="Buying stock from a supplier at DP (Dealer Price) — this adds to stock"
+        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpSuppliers.length}><Plus size={14} /> New purchase</button>} />
+      {!db.mpSuppliers.length && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a Multi Plug supplier first (Suppliers tab).</div>}
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Invoice</th><th>Date</th><th>Supplier</th><th>Product</th><th>Qty</th><th>DP</th><th>Total</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((p) => {
+              const sup = db.mpSuppliers.find((s) => s.id === p.supplierId);
+              return (
+                <tr key={p.id}>
+                  <td className="lg-mono">{p.invoiceNo}</td>
+                  <td className="lg-mono">{fmtDateDMY(p.date)}</td>
+                  <td>{sup ? sup.name : "—"}</td>
+                  <td>{p.productName}</td>
+                  <td className="lg-mono">{p.qty}</td>
+                  <td className="lg-mono">{fmtMoney(p.dp)}</td>
+                  <td className="lg-mono" style={{ fontWeight: 600 }}>{fmtMoney(Number(p.qty) * Number(p.dp))}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setConfirmDel(p)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && <tr><td colSpan={8} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No purchases recorded yet.</td></tr>}
+          </tbody>
+        </table>
+      </Card>
+      {modal && <MpPurchaseModal T={T} db={db} nextMpPurchaseInvoiceNo={nextMpPurchaseInvoiceNo} onClose={() => setModal(null)} onSave={(d) => { saveMpPurchase(d); setModal(null); }} saveMpProduct={saveMpProduct} />}
+      {confirmDel && <ConfirmModal T={T} title="Delete purchase?" message="This will reduce stock and the amount owed to this supplier." onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteMpPurchase(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function MpPurchaseModal({ T, db, nextMpPurchaseInvoiceNo, onClose, onSave, saveMpProduct }) {
+  const [productMode, setProductMode] = useState(db.mpProducts.length ? "existing" : "new");
+  const [f, setF] = useState({
+    date: todayISO(), supplierId: db.mpSuppliers[0]?.id || "", productId: db.mpProducts[0]?.id || "",
+    newProductName: "", qty: 1, dp: 0, remarks: "",
+  });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const total = (Number(f.qty) || 0) * (Number(f.dp) || 0);
+
+  const save = () => {
+    let productId = f.productId;
+    let productName = db.mpProducts.find((p) => p.id === productId)?.name || "";
+    if (productMode === "new") {
+      productId = uid("MPPRD");
+      productName = f.newProductName;
+      saveMpProduct({ id: productId, name: productName, status: "Active" });
+    }
+    onSave({ date: f.date, supplierId: f.supplierId, productId, productName, qty: Number(f.qty), dp: Number(f.dp), remarks: f.remarks });
+  };
+
+  return (
+    <ModalShell T={T} title="New purchase entry" onClose={onClose}>
+      <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 8 }}>Invoice: <span className="lg-mono">{nextMpPurchaseInvoiceNo()}</span></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Date"><input className="lg-input" type="date" value={f.date} onChange={set("date")} /></Field>
+        <Field T={T} label="Supplier">
+          <select className="lg-input" value={f.supplierId} onChange={set("supplierId")}>
+            {db.mpSuppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field T={T} label="Product">
+        <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+          <button type="button" className="lg-btn" onClick={() => setProductMode("existing")} style={{ background: productMode === "existing" ? T.ink : "transparent", color: productMode === "existing" ? "#fff" : T.slate, border: `1px solid ${T.line}`, fontSize: 12 }}>Existing product</button>
+          <button type="button" className="lg-btn" onClick={() => setProductMode("new")} style={{ background: productMode === "new" ? T.ink : "transparent", color: productMode === "new" ? "#fff" : T.slate, border: `1px solid ${T.line}`, fontSize: 12 }}>New product</button>
+        </div>
+        {productMode === "existing" ? (
+          <select className="lg-input" value={f.productId} onChange={set("productId")}>
+            {db.mpProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        ) : (
+          <input className="lg-input" placeholder="New product name" value={f.newProductName} onChange={set("newProductName")} />
+        )}
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Quantity"><input className="lg-input" type="number" value={f.qty} onChange={set("qty")} /></Field>
+        <Field T={T} label="DP (purchase price / unit)"><input className="lg-input" type="number" value={f.dp} onChange={set("dp")} /></Field>
+      </div>
+      <Field T={T} label="Remarks"><input className="lg-input" value={f.remarks} onChange={set("remarks")} /></Field>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0" }}>
+        <span style={{ fontSize: 13, color: T.slate }}>Total (added to payable)</span>
+        <span className="lg-mono" style={{ fontSize: 18, fontWeight: 600 }}>{fmtMoney(total)}</span>
+      </div>
+      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center" }}
+        disabled={!f.supplierId || (productMode === "existing" ? !f.productId : !f.newProductName)}
+        onClick={save}>Save purchase</button>
+    </ModalShell>
+  );
+}
+
+function MpSalesPage({ T, db, saveMpSale, deleteMpSale, mpStockReport, nextMpSaleInvoiceNo }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const rows = [...db.mpSales].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return (
+    <div>
+      <PageHeader T={T} title="Sales entry" subtitle="Sell to a Multi Plug customer via a salesman, at TP with an optional discount"
+        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpCustomers.length || !db.mpProducts.length}><Plus size={14} /> New sale</button>} />
+      {(!db.mpCustomers.length || !db.mpProducts.length) && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a customer and at least one product (via Purchase entry) first.</div>}
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Salesman</th><th>Product</th><th>Qty</th><th>TP</th><th>Discount</th><th>Total</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((s) => {
+              const cust = db.mpCustomers.find((c) => c.id === s.customerId);
+              const sm = db.mpSalesmen.find((x) => x.id === s.salesmanId);
+              return (
+                <tr key={s.id}>
+                  <td className="lg-mono">{s.invoiceNo}</td>
+                  <td className="lg-mono">{fmtDateDMY(s.date)}</td>
+                  <td>{cust ? cust.name : "—"}</td>
+                  <td>{sm ? sm.name : "—"}</td>
+                  <td>{s.productName}</td>
+                  <td className="lg-mono">{s.qty}</td>
+                  <td className="lg-mono">{fmtMoney(s.tp)}</td>
+                  <td className="lg-mono" style={{ color: T.rule }}>{fmtMoney(s.discount || 0)}</td>
+                  <td className="lg-mono" style={{ fontWeight: 600 }}>{fmtMoney(s.total)}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setConfirmDel(s)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && <tr><td colSpan={10} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No sales recorded yet.</td></tr>}
+          </tbody>
+        </table>
+      </Card>
+      {modal && <MpSaleModal T={T} db={db} mpStockReport={mpStockReport} nextMpSaleInvoiceNo={nextMpSaleInvoiceNo} onClose={() => setModal(null)} onSave={(d) => { saveMpSale(d); setModal(null); }} />}
+      {confirmDel && <ConfirmModal T={T} title="Delete sale?" message="This will restore stock and reduce the customer's due." onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteMpSale(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function MpSaleModal({ T, db, mpStockReport, nextMpSaleInvoiceNo, onClose, onSave }) {
+  const [f, setF] = useState({
+    date: todayISO(), customerId: db.mpCustomers[0]?.id || "", salesmanId: db.mpSalesmen[0]?.id || "",
+    productId: db.mpProducts[0]?.id || "", qty: 1, tp: 0, discount: 0, remarks: "",
+  });
+  const stockRow = mpStockReport.find((r) => r.productId === f.productId);
+
+  useEffect(() => {
+    if (stockRow) setF((prev) => ({ ...prev, tp: Number(stockRow.autoTP.toFixed(2)) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [f.productId]);
+
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const gross = (Number(f.qty) || 0) * (Number(f.tp) || 0);
+  const total = Math.max(gross - (Number(f.discount) || 0), 0);
+  const availableStock = stockRow ? stockRow.remainingQty : 0;
+
+  return (
+    <ModalShell T={T} title="New sale entry" onClose={onClose}>
+      <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 8 }}>Invoice: <span className="lg-mono">{nextMpSaleInvoiceNo()}</span></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Date"><input className="lg-input" type="date" value={f.date} onChange={set("date")} /></Field>
+        <Field T={T} label="Customer">
+          <select className="lg-input" value={f.customerId} onChange={set("customerId")}>
+            {db.mpCustomers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </Field>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Salesman">
+          <select className="lg-input" value={f.salesmanId} onChange={set("salesmanId")}>
+            {db.mpSalesmen.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+        <Field T={T} label="Product">
+          <select className="lg-input" value={f.productId} onChange={set("productId")}>
+            {db.mpProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </Field>
+      </div>
+      <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 10 }}>In stock: <span className="lg-mono" style={{ fontWeight: 600, color: availableStock > 0 ? T.green : T.rule }}>{availableStock}</span></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Quantity"><input className="lg-input" type="number" value={f.qty} onChange={set("qty")} /></Field>
+        <Field T={T} label="TP (selling price / unit)"><input className="lg-input" type="number" value={f.tp} onChange={set("tp")} /></Field>
+      </div>
+      <Field T={T} label="Discount (total amount, optional)"><input className="lg-input" type="number" value={f.discount} onChange={set("discount")} /></Field>
+      <Field T={T} label="Remarks"><input className="lg-input" value={f.remarks} onChange={set("remarks")} /></Field>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0" }}>
+        <span style={{ fontSize: 13, color: T.slate }}>Total (added to customer due)</span>
+        <span className="lg-mono" style={{ fontSize: 18, fontWeight: 600 }}>{fmtMoney(total)}</span>
+      </div>
+      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center" }}
+        disabled={!f.customerId || !f.productId || !f.salesmanId}
+        onClick={() => onSave({ ...f, qty: Number(f.qty), tp: Number(f.tp), discount: Number(f.discount) || 0, total, productName: db.mpProducts.find((p) => p.id === f.productId)?.name })}>
+        Save sale
+      </button>
+    </ModalShell>
+  );
+}
+
+function MpPaymentsPage({ T, db, saveMpPayment, deleteMpPayment }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const rows = [...db.mpPayments].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return (
+    <div>
+      <PageHeader T={T} title="Cash receiving" subtitle="Money received from a Multi Plug customer"
+        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpCustomers.length}><Plus size={14} /> New payment</button>} />
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Date</th><th>Customer</th><th>Amount</th><th>Method</th><th>Reference</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((p) => {
+              const cust = db.mpCustomers.find((c) => c.id === p.customerId);
+              return (
+                <tr key={p.id}>
+                  <td className="lg-mono">{fmtDateDMY(p.date)}</td>
+                  <td>{cust ? cust.name : "—"}</td>
+                  <td className="lg-mono" style={{ color: T.green, fontWeight: 600 }}>{fmtMoney(p.amount)}</td>
+                  <td>{p.method}</td>
+                  <td className="lg-mono">{p.reference || "—"}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setConfirmDel(p)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && <tr><td colSpan={6} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No payments recorded yet.</td></tr>}
+          </tbody>
+        </table>
+      </Card>
+      {modal && (
+        <ModalShell T={T} title="New payment" onClose={() => setModal(null)}>
+          <MpPaymentForm T={T} db={db} onSave={(d) => { saveMpPayment(d); setModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && <ConfirmModal T={T} title="Delete payment?" message="This will increase the customer's due balance." onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteMpPayment(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function MpPaymentForm({ T, db, onSave }) {
+  const [f, setF] = useState({ date: todayISO(), customerId: db.mpCustomers[0]?.id || "", amount: 0, method: "Cash", reference: "", remarks: "" });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <>
+      <Field T={T} label="Date"><input className="lg-input" type="date" value={f.date} onChange={set("date")} /></Field>
+      <Field T={T} label="Customer">
+        <select className="lg-input" value={f.customerId} onChange={set("customerId")}>
+          {db.mpCustomers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Amount"><input className="lg-input" type="number" value={f.amount} onChange={set("amount")} /></Field>
+        <Field T={T} label="Method">
+          <select className="lg-input" value={f.method} onChange={set("method")}><option>Cash</option><option>Bank</option><option>Mobile Banking</option><option>Cheque</option></select>
+        </Field>
+      </div>
+      <Field T={T} label="Reference"><input className="lg-input" value={f.reference} onChange={set("reference")} /></Field>
+      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!f.customerId || !f.amount} onClick={() => onSave({ ...f, amount: Number(f.amount) })}>Save payment</button>
+    </>
+  );
+}
+
+function MpSupplierPaymentsPage({ T, db, saveMpSupplierPayment, deleteMpSupplierPayment }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const rows = [...db.mpSupplierPayments].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  return (
+    <div>
+      <PageHeader T={T} title="Payments to suppliers" subtitle="Money paid out to a Multi Plug supplier"
+        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpSuppliers.length}><Plus size={14} /> New payment</button>} />
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Date</th><th>Supplier</th><th>Amount</th><th>Method</th><th>Reference</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((p) => {
+              const sup = db.mpSuppliers.find((s) => s.id === p.supplierId);
+              return (
+                <tr key={p.id}>
+                  <td className="lg-mono">{fmtDateDMY(p.date)}</td>
+                  <td>{sup ? sup.name : "—"}</td>
+                  <td className="lg-mono" style={{ color: T.rule, fontWeight: 600 }}>{fmtMoney(p.amount)}</td>
+                  <td>{p.method}</td>
+                  <td className="lg-mono">{p.reference || "—"}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setConfirmDel(p)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && <tr><td colSpan={6} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No payments recorded yet.</td></tr>}
+          </tbody>
+        </table>
+      </Card>
+      {modal && (
+        <ModalShell T={T} title="New payment to supplier" onClose={() => setModal(null)}>
+          <MpSupplierPaymentForm T={T} db={db} onSave={(d) => { saveMpSupplierPayment(d); setModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && <ConfirmModal T={T} title="Delete payment?" message="This will increase the amount owed to this supplier." onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteMpSupplierPayment(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function MpSupplierPaymentForm({ T, db, onSave }) {
+  const [f, setF] = useState({ date: todayISO(), supplierId: db.mpSuppliers[0]?.id || "", amount: 0, method: "Cash", reference: "", remarks: "" });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <>
+      <Field T={T} label="Date"><input className="lg-input" type="date" value={f.date} onChange={set("date")} /></Field>
+      <Field T={T} label="Supplier">
+        <select className="lg-input" value={f.supplierId} onChange={set("supplierId")}>
+          {db.mpSuppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Amount"><input className="lg-input" type="number" value={f.amount} onChange={set("amount")} /></Field>
+        <Field T={T} label="Method">
+          <select className="lg-input" value={f.method} onChange={set("method")}><option>Cash</option><option>Bank</option><option>Mobile Banking</option><option>Cheque</option></select>
+        </Field>
+      </div>
+      <Field T={T} label="Reference"><input className="lg-input" value={f.reference} onChange={set("reference")} /></Field>
+      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!f.supplierId || !f.amount} onClick={() => onSave({ ...f, amount: Number(f.amount) })}>Save payment</button>
+    </>
+  );
+}
+
+function MpSettingsPage({ T, db, saveMpSettings }) {
+  const [openingCash, setOpeningCash] = useState(db.mpSettings.openingCash);
+  const [marginPercent, setMarginPercent] = useState(db.mpSettings.marginPercent ?? 40);
+  return (
+    <div>
+      <Card T={T} style={{ maxWidth: 420 }}>
+        <Field T={T} label="Multi Plug opening cash balance"><input className="lg-input" type="number" value={openingCash} onChange={(e) => setOpeningCash(e.target.value)} /></Field>
+        <Field T={T} label="Default margin % (used to auto-suggest TP from DP)">
+          <input className="lg-input" type="number" value={marginPercent} onChange={(e) => setMarginPercent(e.target.value)} />
+        </Field>
+        <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 12, marginTop: -6 }}>
+          এই % দিয়ে Stock Report আর Sales entry-তে TP (বিক্রয়মূল্য) অটোমেটিক suggest হয় (DP + এই %) — এটা শুধু একটা suggestion, প্রতিটা বিক্রির সময় চাইলে TP নিজে বদলে দিতে পারবে।
+        </div>
+        <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+          onClick={() => saveMpSettings({ openingCash: Number(openingCash), marginPercent: Number(marginPercent) })}>Save</button>
+      </Card>
+      <div style={{ fontSize: 12, color: T.slateLight, marginTop: 14, maxWidth: 420 }}>
+        Multi Plug has its own customers, suppliers, products and cash — completely separate from the main ARHAM TRADERS ledger. Its cash-in-hand also appears as a card on the main Dashboard.
+      </div>
     </div>
   );
 }
