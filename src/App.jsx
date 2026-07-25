@@ -2441,6 +2441,25 @@ function MpSalesPage({ T, db, saveMpSale, deleteMpSale, mpStockReport, nextMpSal
   const [modal, setModal] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
   const rows = [...db.mpSales].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
+  // DP (cost) isn't stored on the sale itself — it's looked up from the product's
+  // current average purchase price (Stock Report), same weighted-average method used there.
+  const rowsWithProfit = rows.map((s) => {
+    const stockRow = mpStockReport.find((r) => r.productId === s.productId);
+    const dpUnit = stockRow ? stockRow.avgDP : 0;
+    const dpCost = dpUnit * Number(s.qty);
+    const profit = Number(s.total) - dpCost;
+    return { ...s, dpUnit, dpCost, profit };
+  });
+
+  const totals = rowsWithProfit.reduce((a, s) => ({
+    qty: a.qty + Number(s.qty),
+    discount: a.discount + Number(s.discount || 0),
+    total: a.total + Number(s.total),
+    dpCost: a.dpCost + s.dpCost,
+    profit: a.profit + s.profit,
+  }), { qty: 0, discount: 0, total: 0, dpCost: 0, profit: 0 });
+
   return (
     <div>
       <PageHeader T={T} title="Sales entry" subtitle="Sell to a Multi Plug customer via a salesman, at TP with an optional discount"
@@ -2448,9 +2467,9 @@ function MpSalesPage({ T, db, saveMpSale, deleteMpSale, mpStockReport, nextMpSal
       {(!db.mpCustomers.length || !db.mpProducts.length) && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a customer and at least one product (via Purchase entry) first.</div>}
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
-          <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Salesman</th><th>Product</th><th>Qty</th><th>TP</th><th>Discount</th><th>Total</th><th></th></tr></thead>
+          <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Salesman</th><th>Product</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>DP</th><th style={{ textAlign: "right" }}>TP</th><th style={{ textAlign: "right" }}>Discount</th><th style={{ textAlign: "right" }}>Total</th><th style={{ textAlign: "right" }}>Profit</th><th></th></tr></thead>
           <tbody>
-            {rows.map((s) => {
+            {rowsWithProfit.map((s) => {
               const cust = db.mpCustomers.find((c) => c.id === s.customerId);
               const sm = db.mpSalesmen.find((x) => x.id === s.salesmanId);
               return (
@@ -2460,18 +2479,34 @@ function MpSalesPage({ T, db, saveMpSale, deleteMpSale, mpStockReport, nextMpSal
                   <td>{cust ? cust.name : "—"}</td>
                   <td>{sm ? sm.name : "—"}</td>
                   <td>{s.productName}</td>
-                  <td className="lg-mono">{s.qty}</td>
-                  <td className="lg-mono">{fmtMoney(s.tp)}</td>
-                  <td className="lg-mono" style={{ color: T.rule }}>{fmtMoney(s.discount || 0)}</td>
-                  <td className="lg-mono" style={{ fontWeight: 600 }}>{fmtMoney(s.total)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right" }}>{s.qty}</td>
+                  <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(s.dpUnit)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(s.tp)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", color: T.rule }}>{fmtMoney(s.discount || 0)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(s.total)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600, color: s.profit >= 0 ? T.green : T.rule }}>{fmtMoney(s.profit)}</td>
                   <td style={{ whiteSpace: "nowrap" }}>
                     <button onClick={() => setConfirmDel(s)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
                   </td>
                 </tr>
               );
             })}
-            {!rows.length && <tr><td colSpan={10} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No sales recorded yet.</td></tr>}
+            {!rowsWithProfit.length && <tr><td colSpan={12} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No sales recorded yet.</td></tr>}
           </tbody>
+          {!!rowsWithProfit.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={5} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{totals.qty}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totals.dpCost)}</td>
+                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, color: T.rule, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totals.discount)}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totals.total)}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, color: totals.profit >= 0 ? T.green : T.rule, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totals.profit)}</td>
+                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </Card>
       {modal && <MpSaleModal T={T} db={db} mpStockReport={mpStockReport} nextMpSaleInvoiceNo={nextMpSaleInvoiceNo} onClose={() => setModal(null)} onSave={(d) => { saveMpSale(d); setModal(null); }} />}
