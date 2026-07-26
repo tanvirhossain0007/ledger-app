@@ -2119,16 +2119,32 @@ function MpProductRenameForm({ T, product, onSave }) {
 function MpCustomersPage({ T, db, saveMpCustomer, deleteMpCustomer, mpCustomerBalance }) {
   const [modal, setModal] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
-  const totalBalance = db.mpCustomers.reduce((a, c) => a + mpCustomerBalance(c.id), 0);
+  const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const filtered = db.mpCustomers.filter((c) => {
+    const matchQ = !q || c.name.toLowerCase().includes(q.toLowerCase()) || (c.mobile || "").includes(q);
+    const matchStatus = statusFilter === "All" || c.status === statusFilter;
+    return matchQ && matchStatus;
+  });
+  const totalBalance = filtered.reduce((a, c) => a + mpCustomerBalance(c.id), 0);
   return (
     <div>
       <PageHeader T={T} title="Multi Plug customers" subtitle={`${db.mpCustomers.length} total`}
         action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add customer</button>} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search name or mobile" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <select className="lg-input" style={{ width: 140 }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option>All</option><option>Active</option><option>Inactive</option>
+        </select>
+      </div>
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
           <thead><tr><th>Name</th><th>Mobile</th><th>Status</th><th>Balance</th><th></th></tr></thead>
           <tbody>
-            {db.mpCustomers.map((c) => {
+            {filtered.map((c) => {
               const bal = mpCustomerBalance(c.id);
               return (
                 <tr key={c.id}>
@@ -2143,9 +2159,9 @@ function MpCustomersPage({ T, db, saveMpCustomer, deleteMpCustomer, mpCustomerBa
                 </tr>
               );
             })}
-            {!db.mpCustomers.length && <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No customers yet.</td></tr>}
+            {!filtered.length && <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No customers found.</td></tr>}
           </tbody>
-          {!!db.mpCustomers.length && (
+          {!!filtered.length && (
             <tfoot><tr>
               <td colSpan={3} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total balance</td>
               <td className="lg-mono" style={{ fontWeight: 700, color: totalBalance > 0 ? T.rule : T.green, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalBalance)}</td>
@@ -2167,16 +2183,32 @@ function MpCustomersPage({ T, db, saveMpCustomer, deleteMpCustomer, mpCustomerBa
 function MpSuppliersPage({ T, db, saveMpSupplier, deleteMpSupplier, mpSupplierBalance }) {
   const [modal, setModal] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
-  const totalPayable = db.mpSuppliers.reduce((a, s) => a + mpSupplierBalance(s.id), 0);
+  const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const filtered = db.mpSuppliers.filter((s) => {
+    const matchQ = !q || s.name.toLowerCase().includes(q.toLowerCase()) || (s.mobile || "").includes(q);
+    const matchStatus = statusFilter === "All" || s.status === statusFilter;
+    return matchQ && matchStatus;
+  });
+  const totalPayable = filtered.reduce((a, s) => a + mpSupplierBalance(s.id), 0);
   return (
     <div>
       <PageHeader T={T} title="Multi Plug suppliers" subtitle={`${db.mpSuppliers.length} total`}
         action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add supplier</button>} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search name or mobile" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <select className="lg-input" style={{ width: 140 }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option>All</option><option>Active</option><option>Inactive</option>
+        </select>
+      </div>
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
           <thead><tr><th>Name</th><th>Mobile</th><th>Status</th><th>Payable</th><th></th></tr></thead>
           <tbody>
-            {db.mpSuppliers.map((s) => {
+            {filtered.map((s) => {
               const bal = mpSupplierBalance(s.id);
               return (
                 <tr key={s.id}>
@@ -2191,9 +2223,9 @@ function MpSuppliersPage({ T, db, saveMpSupplier, deleteMpSupplier, mpSupplierBa
                 </tr>
               );
             })}
-            {!db.mpSuppliers.length && <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No suppliers yet.</td></tr>}
+            {!filtered.length && <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No suppliers found.</td></tr>}
           </tbody>
-          {!!db.mpSuppliers.length && (
+          {!!filtered.length && (
             <tfoot><tr>
               <td colSpan={3} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total payable</td>
               <td className="lg-mono" style={{ fontWeight: 700, color: totalPayable > 0 ? T.rule : T.green, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalPayable)}</td>
@@ -2237,6 +2269,8 @@ function MpSalesmenPage({ T, db, saveMpSalesman, deleteMpSalesman, mpCustomerBal
   const [modal, setModal] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
   const [expanded, setExpanded] = useState(null);
+  const [q, setQ] = useState("");
+  const filteredSalesmen = db.mpSalesmen.filter((sm) => !q || sm.name.toLowerCase().includes(q.toLowerCase()) || (sm.mobile || "").includes(q));
 
   const salesmanStats = (smId) => {
     const sales = db.mpSales.filter((s) => s.salesmanId === smId);
@@ -2262,8 +2296,12 @@ function MpSalesmenPage({ T, db, saveMpSalesman, deleteMpSalesman, mpCustomerBal
     <div>
       <PageHeader T={T} title="Salesmen" subtitle="Sales, discounts given, and commission per salesman"
         action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add salesman</button>} />
+      <div style={{ position: "relative", maxWidth: 280, marginBottom: 14 }}>
+        <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+        <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search name or mobile" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {db.mpSalesmen.map((sm) => {
+        {filteredSalesmen.map((sm) => {
           const stats = salesmanStats(sm.id);
           const isOpen = expanded === sm.id;
           return (
@@ -2308,7 +2346,7 @@ function MpSalesmenPage({ T, db, saveMpSalesman, deleteMpSalesman, mpCustomerBal
             </Card>
           );
         })}
-        {!db.mpSalesmen.length && <div style={{ textAlign: "center", padding: 30, color: T.slateLight }}>No salesmen added yet.</div>}
+        {!filteredSalesmen.length && <div style={{ textAlign: "center", padding: 30, color: T.slateLight }}>No salesmen found.</div>}
       </div>
       {modal && <MpSalesmanModal T={T} initial={modal} onClose={() => setModal(null)} onSave={(d) => { saveMpSalesman(d); setModal(null); }} />}
       {confirmDel && <ConfirmModal T={T} title="Delete salesman?" message={`Remove ${confirmDel.name}?`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteMpSalesman(confirmDel.id); setConfirmDel(null); }} />}
@@ -2339,12 +2377,29 @@ function MpSalesmanModal({ T, initial, onClose, onSave }) {
 function MpPurchasePage({ T, db, saveMpPurchase, deleteMpPurchase, saveMpProduct, nextMpPurchaseInvoiceNo }) {
   const [modal, setModal] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
-  const rows = [...db.mpPurchases].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const [q, setQ] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const rows = [...db.mpPurchases].sort((a, b) => (b.date || "").localeCompare(a.date || "")).filter((p) => {
+    const sup = db.mpSuppliers.find((s) => s.id === p.supplierId);
+    const matchQ = !q || p.productName.toLowerCase().includes(q.toLowerCase()) || (sup && sup.name.toLowerCase().includes(q.toLowerCase()));
+    const matchFrom = !from || p.date >= from;
+    const matchTo = !to || p.date <= to;
+    return matchQ && matchFrom && matchTo;
+  });
   return (
     <div>
       <PageHeader T={T} title="Purchase entry" subtitle="Buying stock from a supplier at DP (Dealer Price) — this adds to stock"
         action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpSuppliers.length}><Plus size={14} /> New purchase</button>} />
       {!db.mpSuppliers.length && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a Multi Plug supplier first (Suppliers tab).</div>}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search product or supplier" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <input className="lg-input" style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <input className="lg-input" style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
           <thead><tr><th>Invoice</th><th>Date</th><th>Supplier</th><th>Product</th><th>Qty</th><th>DP</th><th>Total</th><th></th></tr></thead>
@@ -2440,7 +2495,18 @@ function MpPurchaseModal({ T, db, nextMpPurchaseInvoiceNo, onClose, onSave }) {
 function MpSalesPage({ T, db, saveMpSale, deleteMpSale, mpStockReport, nextMpSaleInvoiceNo }) {
   const [modal, setModal] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
-  const rows = [...db.mpSales].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const [q, setQ] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [salesmanFilter, setSalesmanFilter] = useState("All");
+  const rows = [...db.mpSales].sort((a, b) => (b.date || "").localeCompare(a.date || "")).filter((s) => {
+    const cust = db.mpCustomers.find((c) => c.id === s.customerId);
+    const matchQ = !q || s.productName.toLowerCase().includes(q.toLowerCase()) || (cust && cust.name.toLowerCase().includes(q.toLowerCase()));
+    const matchFrom = !from || s.date >= from;
+    const matchTo = !to || s.date <= to;
+    const matchSalesman = salesmanFilter === "All" || s.salesmanId === salesmanFilter;
+    return matchQ && matchFrom && matchTo && matchSalesman;
+  });
 
   // DP (cost) isn't stored on the sale itself — it's looked up from the product's
   // current average purchase price (Stock Report), same weighted-average method used there.
@@ -2465,6 +2531,18 @@ function MpSalesPage({ T, db, saveMpSale, deleteMpSale, mpStockReport, nextMpSal
       <PageHeader T={T} title="Sales entry" subtitle="Sell to a Multi Plug customer via a salesman, at TP with an optional discount"
         action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpCustomers.length || !db.mpProducts.length}><Plus size={14} /> New sale</button>} />
       {(!db.mpCustomers.length || !db.mpProducts.length) && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a customer and at least one product (via Purchase entry) first.</div>}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search product or customer" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <select className="lg-input" style={{ width: 160 }} value={salesmanFilter} onChange={(e) => setSalesmanFilter(e.target.value)}>
+          <option value="All">All salesmen</option>
+          {db.mpSalesmen.map((sm) => <option key={sm.id} value={sm.id}>{sm.name}</option>)}
+        </select>
+        <input className="lg-input" style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <input className="lg-input" style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
           <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Salesman</th><th>Product</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>DP</th><th style={{ textAlign: "right" }}>TP</th><th style={{ textAlign: "right" }}>Discount</th><th style={{ textAlign: "right" }}>Total</th><th style={{ textAlign: "right" }}>Profit</th><th></th></tr></thead>
@@ -2578,11 +2656,28 @@ function MpSaleModal({ T, db, mpStockReport, nextMpSaleInvoiceNo, onClose, onSav
 function MpPaymentsPage({ T, db, saveMpPayment, deleteMpPayment }) {
   const [modal, setModal] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
-  const rows = [...db.mpPayments].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const [q, setQ] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const rows = [...db.mpPayments].sort((a, b) => (b.date || "").localeCompare(a.date || "")).filter((p) => {
+    const cust = db.mpCustomers.find((c) => c.id === p.customerId);
+    const matchQ = !q || (cust && cust.name.toLowerCase().includes(q.toLowerCase()));
+    const matchFrom = !from || p.date >= from;
+    const matchTo = !to || p.date <= to;
+    return matchQ && matchFrom && matchTo;
+  });
   return (
     <div>
       <PageHeader T={T} title="Cash receiving" subtitle="Money received from a Multi Plug customer"
         action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpCustomers.length}><Plus size={14} /> New payment</button>} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search customer" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <input className="lg-input" style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <input className="lg-input" style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
           <thead><tr><th>Date</th><th>Customer</th><th>Amount</th><th>Method</th><th>Reference</th><th></th></tr></thead>
@@ -2643,11 +2738,28 @@ function MpPaymentForm({ T, db, onSave }) {
 function MpSupplierPaymentsPage({ T, db, saveMpSupplierPayment, deleteMpSupplierPayment }) {
   const [modal, setModal] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
-  const rows = [...db.mpSupplierPayments].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  const [q, setQ] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const rows = [...db.mpSupplierPayments].sort((a, b) => (b.date || "").localeCompare(a.date || "")).filter((p) => {
+    const sup = db.mpSuppliers.find((s) => s.id === p.supplierId);
+    const matchQ = !q || (sup && sup.name.toLowerCase().includes(q.toLowerCase()));
+    const matchFrom = !from || p.date >= from;
+    const matchTo = !to || p.date <= to;
+    return matchQ && matchFrom && matchTo;
+  });
   return (
     <div>
       <PageHeader T={T} title="Payments to suppliers" subtitle="Money paid out to a Multi Plug supplier"
         action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpSuppliers.length}><Plus size={14} /> New payment</button>} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search supplier" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <input className="lg-input" style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <input className="lg-input" style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
           <thead><tr><th>Date</th><th>Supplier</th><th>Amount</th><th>Method</th><th>Reference</th><th></th></tr></thead>
