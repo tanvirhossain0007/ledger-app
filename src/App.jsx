@@ -640,6 +640,31 @@ export default function App() {
   };
   const deleteMpSale = (id) => mpDelete("mpSales", id, "Sale entry removed");
 
+  // One invoice, many product line items, plus an optional "cash received now" payment —
+  // all saved in a single state update so nothing can race/fail out of order.
+  const saveMpInvoice = ({ date, customerId, salesmanId, items, cashReceived }) => {
+    const invoiceNo = nextMpSaleInvoiceNo();
+    const saleRows = items.map((it) => ({
+      id: uid("MPSAL"), invoiceNo, date, customerId, salesmanId,
+      productId: it.productId, productName: it.productName, qty: it.qty, tp: it.tp,
+      discount: it.discount || 0, total: Math.max(it.qty * it.tp - (it.discount || 0), 0),
+    }));
+    const grandTotal = saleRows.reduce((a, r) => a + r.total, 0);
+    const cash = Number(cashReceived) || 0;
+    let paymentRow = null;
+    if (cash > 0) {
+      paymentRow = { id: uid("MPPAY"), date, customerId, amount: Math.min(cash, grandTotal), method: "Cash", reference: invoiceNo, remarks: "Cash received at sale" };
+    }
+    updateDb((prev) => ({
+      ...prev,
+      mpSales: [...prev.mpSales, ...saleRows],
+      mpPayments: paymentRow ? [...prev.mpPayments, paymentRow] : prev.mpPayments,
+      mpSettings: { ...prev.mpSettings, saleInvoiceSeq: prev.mpSettings.saleInvoiceSeq + 1 },
+    }));
+    notify("Invoice saved — stock, due balance and commission updated");
+    return { invoiceNo, date, customerId, salesmanId, items: saleRows, grandTotal, cashReceived: cash, balanceDue: Math.max(grandTotal - cash, 0) };
+  };
+
   const saveMpPayment = (data) => mpSave("mpPayments", "MPPAY", data, "Payment recorded");
   const deleteMpPayment = (id) => mpDelete("mpPayments", id, "Payment removed");
 
@@ -757,7 +782,7 @@ export default function App() {
           saveMpSalesman={saveMpSalesman} deleteMpSalesman={deleteMpSalesman}
           saveMpProduct={saveMpProduct} deleteMpProduct={deleteMpProduct}
           saveMpPurchase={saveMpPurchase} deleteMpPurchase={deleteMpPurchase}
-          saveMpSale={saveMpSale} deleteMpSale={deleteMpSale}
+          saveMpSale={saveMpSale} deleteMpSale={deleteMpSale} saveMpInvoice={saveMpInvoice}
           saveMpPayment={saveMpPayment} deleteMpPayment={deleteMpPayment}
           saveMpSupplierPayment={saveMpSupplierPayment} deleteMpSupplierPayment={deleteMpSupplierPayment}
           saveMpSettings={saveMpSettings}
@@ -1997,8 +2022,10 @@ function MultiPlugPage(props) {
 }
 
 function MpDashboard({ T, db, mpTotals, mpStockReport }) {
+  const totalInStock = mpStockReport.reduce((a, r) => a + r.remainingQty, 0);
   const cards = [
     { label: "Total products", value: db.mpProducts.length, accent: "#B8912F" },
+    { label: "Total in stock (pcs)", value: totalInStock, accent: "#C1663B" },
     { label: "Total sales", value: fmtMoney(mpTotals.totalSales), accent: "#3B6EA5" },
     { label: "Total collections", value: fmtMoney(mpTotals.totalCollections), tone: "good", accent: "#2F6B4F" },
     { label: "Total outstanding (customers)", value: fmtMoney(mpTotals.totalOutstanding), tone: "danger", accent: "#B23A2E" },
@@ -2043,6 +2070,9 @@ function MpStockReportPage({ T, mpStockReport, db, saveMpProduct, deleteMpProduc
   })));
   const totalDP = mpStockReport.reduce((a, r) => a + r.totalDPValue, 0);
   const totalTP = mpStockReport.reduce((a, r) => a + r.totalTPValue, 0);
+  const totalPurchasedQty = mpStockReport.reduce((a, r) => a + r.totalPurchasedQty, 0);
+  const totalSoldQty = mpStockReport.reduce((a, r) => a + r.totalSoldQty, 0);
+  const totalInStock = mpStockReport.reduce((a, r) => a + r.remainingQty, 0);
   return (
     <div>
       <PageHeader T={T} title="Stock report" subtitle="TP is auto-suggested from DP using the margin % set in Settings"
@@ -2080,7 +2110,11 @@ function MpStockReportPage({ T, mpStockReport, db, saveMpProduct, deleteMpProduc
           {!!mpStockReport.length && (
             <tfoot>
               <tr>
-                <td colSpan={7} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total stock value</td>
+                <td colSpan={2} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{totalPurchasedQty}</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{totalSoldQty}</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right", color: T.green }}>{totalInStock}</td>
+                <td colSpan={2} style={{ borderTop: `2px solid ${T.line}` }}></td>
                 <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{fmtMoney(totalDP)}</td>
                 <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{fmtMoney(totalTP)}</td>
                 <td style={{ borderTop: `2px solid ${T.line}` }}></td>
@@ -2492,9 +2526,10 @@ function MpPurchaseModal({ T, db, nextMpPurchaseInvoiceNo, onClose, onSave }) {
   );
 }
 
-function MpSalesPage({ T, db, saveMpSale, deleteMpSale, mpStockReport, nextMpSaleInvoiceNo }) {
+function MpSalesPage({ T, db, saveMpSale, deleteMpSale, saveMpInvoice, mpStockReport, nextMpSaleInvoiceNo }) {
   const [modal, setModal] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
+  const [invoicePreview, setInvoicePreview] = useState(null);
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -2528,8 +2563,8 @@ function MpSalesPage({ T, db, saveMpSale, deleteMpSale, mpStockReport, nextMpSal
 
   return (
     <div>
-      <PageHeader T={T} title="Sales entry" subtitle="Sell to a Multi Plug customer via a salesman, at TP with an optional discount"
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpCustomers.length || !db.mpProducts.length}><Plus size={14} /> New sale</button>} />
+      <PageHeader T={T} title="Sales entry" subtitle="One invoice per customer — add several products, take cash payment, and download a PDF"
+        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpCustomers.length || !db.mpProducts.length}><Plus size={14} /> New invoice</button>} />
       {(!db.mpCustomers.length || !db.mpProducts.length) && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a customer and at least one product (via Purchase entry) first.</div>}
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
@@ -2587,67 +2622,204 @@ function MpSalesPage({ T, db, saveMpSale, deleteMpSale, mpStockReport, nextMpSal
           )}
         </table>
       </Card>
-      {modal && <MpSaleModal T={T} db={db} mpStockReport={mpStockReport} nextMpSaleInvoiceNo={nextMpSaleInvoiceNo} onClose={() => setModal(null)} onSave={(d) => { saveMpSale(d); setModal(null); }} />}
+      {modal && <MpInvoiceModal T={T} db={db} mpStockReport={mpStockReport} nextMpSaleInvoiceNo={nextMpSaleInvoiceNo} onClose={() => setModal(null)} onSave={(invoiceData) => { const invoice = saveMpInvoice(invoiceData); setModal(null); setInvoicePreview(invoice); }} />}
+      {invoicePreview && <MpInvoicePreviewModal T={T} db={db} invoice={invoicePreview} onClose={() => setInvoicePreview(null)} />}
       {confirmDel && <ConfirmModal T={T} title="Delete sale?" message="This will restore stock and reduce the customer's due." onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteMpSale(confirmDel.id); setConfirmDel(null); }} />}
     </div>
   );
 }
 
-function MpSaleModal({ T, db, mpStockReport, nextMpSaleInvoiceNo, onClose, onSave }) {
-  const [f, setF] = useState({
-    date: todayISO(), customerId: db.mpCustomers[0]?.id || "", salesmanId: db.mpSalesmen[0]?.id || "",
-    productId: db.mpProducts[0]?.id || "", qty: 1, tp: 0, discount: 0, remarks: "",
-  });
-  const stockRow = mpStockReport.find((r) => r.productId === f.productId);
+function MpInvoiceModal({ T, db, mpStockReport, nextMpSaleInvoiceNo, onClose, onSave }) {
+  const [date, setDate] = useState(todayISO());
+  const [customerId, setCustomerId] = useState(db.mpCustomers[0]?.id || "");
+  const [salesmanId, setSalesmanId] = useState(db.mpSalesmen[0]?.id || "");
+  const [items, setItems] = useState([]);
+  const [cashReceived, setCashReceived] = useState(0);
 
+  // Line-item entry (product/qty/tp/discount) before adding to the invoice list below.
+  const [line, setLine] = useState({ productId: db.mpProducts[0]?.id || "", qty: 1, tp: 0, discount: 0 });
+  const lineStockRow = mpStockReport.find((r) => r.productId === line.productId);
   useEffect(() => {
-    if (stockRow) setF((prev) => ({ ...prev, tp: Number(stockRow.autoTP.toFixed(2)) }));
+    if (lineStockRow) setLine((prev) => ({ ...prev, tp: Number(lineStockRow.autoTP.toFixed(2)) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [f.productId]);
+  }, [line.productId]);
 
-  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
-  const gross = (Number(f.qty) || 0) * (Number(f.tp) || 0);
-  const total = Math.max(gross - (Number(f.discount) || 0), 0);
-  const availableStock = stockRow ? stockRow.remainingQty : 0;
+  const addItem = () => {
+    const prod = db.mpProducts.find((p) => p.id === line.productId);
+    if (!prod || !line.qty || !line.tp) return;
+    setItems([...items, {
+      key: uid("LINE"), productId: line.productId, productName: prod.name,
+      qty: Number(line.qty), tp: Number(line.tp), discount: Number(line.discount) || 0,
+    }]);
+    setLine({ productId: db.mpProducts[0]?.id || "", qty: 1, tp: 0, discount: 0 });
+  };
+  const removeItem = (key) => setItems(items.filter((it) => it.key !== key));
+
+  const grandTotal = items.reduce((a, it) => a + Math.max(it.qty * it.tp - it.discount, 0), 0);
+  const cash = Math.min(Number(cashReceived) || 0, grandTotal);
+  const balanceDue = Math.max(grandTotal - cash, 0);
+
+  const custLabel = (c) => `${c.name}${c.address ? " — " + c.address : c.mobile ? " — " + c.mobile : ""}`;
 
   return (
-    <ModalShell T={T} title="New sale entry" onClose={onClose}>
+    <ModalShell T={T} title="New invoice" onClose={onClose}>
       <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 8 }}>Invoice: <span className="lg-mono">{nextMpSaleInvoiceNo()}</span></div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field T={T} label="Date"><input className="lg-input" type="date" value={f.date} onChange={set("date")} /></Field>
-        <Field T={T} label="Customer">
-          <select className="lg-input" value={f.customerId} onChange={set("customerId")}>
-            {db.mpCustomers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </Field>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Date"><input className="lg-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
         <Field T={T} label="Salesman">
-          <select className="lg-input" value={f.salesmanId} onChange={set("salesmanId")}>
+          <select className="lg-input" value={salesmanId} onChange={(e) => setSalesmanId(e.target.value)}>
             {db.mpSalesmen.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </Field>
-        <Field T={T} label="Product">
-          <select className="lg-input" value={f.productId} onChange={set("productId")}>
+      </div>
+      <Field T={T} label="Customer (name — address/mobile, to tell same-name customers apart)">
+        <select className="lg-input" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+          {db.mpCustomers.map((c) => <option key={c.id} value={c.id}>{custLabel(c)}</option>)}
+        </select>
+      </Field>
+
+      <div style={{ borderTop: `1px solid ${T.line}`, marginTop: 10, paddingTop: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Add product to this invoice</div>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+          <select className="lg-input" value={line.productId} onChange={(e) => setLine({ ...line, productId: e.target.value })}>
             {db.mpProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-        </Field>
+          <input className="lg-input" type="number" placeholder="Qty" value={line.qty} onChange={(e) => setLine({ ...line, qty: e.target.value })} />
+          <input className="lg-input" type="number" placeholder="TP" value={line.tp} onChange={(e) => setLine({ ...line, tp: e.target.value })} />
+          <input className="lg-input" type="number" placeholder="Discount" value={line.discount} onChange={(e) => setLine({ ...line, discount: e.target.value })} />
+        </div>
+        {lineStockRow && <div style={{ fontSize: 11, color: T.slateLight, marginBottom: 8 }}>In stock: <span className="lg-mono" style={{ color: lineStockRow.remainingQty > 0 ? T.green : T.rule, fontWeight: 600 }}>{lineStockRow.remainingQty}</span></div>}
+        <button type="button" className="lg-btn" style={{ background: T.paper, border: `1px solid ${T.line}`, color: T.ink, width: "100%", marginBottom: 14 }} onClick={addItem} disabled={!line.productId || !line.qty}>
+          <Plus size={14} /> Add product to invoice
+        </button>
       </div>
-      <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 10 }}>In stock: <span className="lg-mono" style={{ fontWeight: 600, color: availableStock > 0 ? T.green : T.rule }}>{availableStock}</span></div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Field T={T} label="Quantity"><input className="lg-input" type="number" value={f.qty} onChange={set("qty")} /></Field>
-        <Field T={T} label="TP (selling price / unit)"><input className="lg-input" type="number" value={f.tp} onChange={set("tp")} /></Field>
-      </div>
-      <Field T={T} label="Discount (total amount, optional)"><input className="lg-input" type="number" value={f.discount} onChange={set("discount")} /></Field>
-      <Field T={T} label="Remarks"><input className="lg-input" value={f.remarks} onChange={set("remarks")} /></Field>
+
+      {!!items.length && (
+        <div style={{ marginBottom: 14 }}>
+          <table className="lg-table">
+            <thead><tr><th>Product</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>TP</th><th style={{ textAlign: "right" }}>Disc.</th><th style={{ textAlign: "right" }}>Total</th><th></th></tr></thead>
+            <tbody>
+              {items.map((it) => (
+                <tr key={it.key}>
+                  <td>{it.productName}</td>
+                  <td className="lg-mono" style={{ textAlign: "right" }}>{it.qty}</td>
+                  <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(it.tp)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", color: T.rule }}>{fmtMoney(it.discount)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(Math.max(it.qty * it.tp - it.discount, 0))}</td>
+                  <td><button onClick={() => removeItem(it.key)} style={{ background: "transparent", border: "none", cursor: "pointer", color: T.rule }}><X size={14} /></button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0" }}>
-        <span style={{ fontSize: 13, color: T.slate }}>Total (added to customer due)</span>
-        <span className="lg-mono" style={{ fontSize: 18, fontWeight: 600 }}>{fmtMoney(total)}</span>
+        <span style={{ fontSize: 13, color: T.slate }}>Invoice total</span>
+        <span className="lg-mono" style={{ fontSize: 18, fontWeight: 700 }}>{fmtMoney(grandTotal)}</span>
       </div>
+
+      <Field T={T} label="Cash received now (leave 0 if fully on credit)">
+        <input className="lg-input" type="number" value={cashReceived} onChange={(e) => setCashReceived(e.target.value)} placeholder="0" />
+      </Field>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "6px 0 14px", padding: "8px 10px", background: hexToRgba(balanceDue > 0 ? T.rule : T.green, 0.1), borderRadius: 8 }}>
+        <span style={{ fontSize: 12.5, color: T.slate }}>{balanceDue > 0 ? "Remaining balance (added to customer due)" : "Fully paid — balance zero"}</span>
+        <span className="lg-mono" style={{ fontSize: 15, fontWeight: 600, color: balanceDue > 0 ? T.rule : T.green }}>{fmtMoney(balanceDue)}</span>
+      </div>
+
       <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center" }}
-        disabled={!f.customerId || !f.productId || !f.salesmanId}
-        onClick={() => onSave({ ...f, qty: Number(f.qty), tp: Number(f.tp), discount: Number(f.discount) || 0, total, productName: db.mpProducts.find((p) => p.id === f.productId)?.name })}>
-        Save sale
+        disabled={!customerId || !salesmanId || !items.length}
+        onClick={() => onSave({ date, customerId, salesmanId, items, cashReceived: cash })}>
+        Save invoice
+      </button>
+    </ModalShell>
+  );
+}
+
+function MpInvoicePreviewModal({ T, db, invoice, onClose }) {
+  const cust = db.mpCustomers.find((c) => c.id === invoice.customerId);
+  const sm = db.mpSalesmen.find((s) => s.id === invoice.salesmanId);
+
+  const downloadPDF = async () => {
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const marginX = 40;
+    let y = 50;
+
+    doc.setFontSize(18); doc.setFont(undefined, "bold");
+    doc.text("Multi Plug — Invoice", marginX, y);
+    doc.setFontSize(10); doc.setFont(undefined, "normal");
+    y += 22;
+    doc.text(`Invoice: ${invoice.invoiceNo}`, marginX, y);
+    doc.text(`Date: ${fmtDateDMY(invoice.date)}`, 400, y);
+    y += 16;
+    doc.text(`Customer: ${cust ? cust.name : "-"}`, marginX, y);
+    y += 14;
+    if (cust?.address) { doc.text(`Address: ${cust.address}`, marginX, y); y += 14; }
+    if (cust?.mobile) { doc.text(`Mobile: ${cust.mobile}`, marginX, y); y += 14; }
+    doc.text(`Salesman: ${sm ? sm.name : "-"}`, marginX, y);
+    y += 22;
+
+    doc.setFont(undefined, "bold");
+    doc.text("Product", marginX, y);
+    doc.text("Qty", 260, y);
+    doc.text("TP", 320, y);
+    doc.text("Discount", 390, y);
+    doc.text("Total", 480, y);
+    doc.setFont(undefined, "normal");
+    y += 6;
+    doc.line(marginX, y, 555, y);
+    y += 16;
+
+    invoice.items.forEach((it) => {
+      doc.text(String(it.productName), marginX, y);
+      doc.text(String(it.qty), 260, y);
+      doc.text(fmtMoney(it.tp), 320, y);
+      doc.text(fmtMoney(it.discount), 390, y);
+      doc.text(fmtMoney(it.total), 480, y);
+      y += 18;
+    });
+
+    y += 6;
+    doc.line(marginX, y, 555, y);
+    y += 20;
+    doc.setFont(undefined, "bold");
+    doc.text(`Invoice total: ${fmtMoney(invoice.grandTotal)}`, 350, y); y += 16;
+    doc.setFont(undefined, "normal");
+    doc.text(`Cash received: ${fmtMoney(invoice.cashReceived)}`, 350, y); y += 16;
+    doc.setFont(undefined, "bold");
+    doc.text(`Balance due: ${fmtMoney(invoice.balanceDue)}`, 350, y);
+
+    doc.save(`invoice-${invoice.invoiceNo}.pdf`);
+  };
+
+  return (
+    <ModalShell T={T} title={`Invoice ${invoice.invoiceNo}`} onClose={onClose}>
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontWeight: 600 }}>{cust ? cust.name : "—"}</div>
+        <div style={{ fontSize: 12, color: T.slate }}>{cust?.address || cust?.mobile || ""}</div>
+        <div style={{ fontSize: 12, color: T.slateLight, marginTop: 2 }}>Salesman: {sm ? sm.name : "—"} · Date: {fmtDateDMY(invoice.date)}</div>
+      </div>
+      <table className="lg-table" style={{ marginBottom: 12 }}>
+        <thead><tr><th>Product</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>TP</th><th style={{ textAlign: "right" }}>Total</th></tr></thead>
+        <tbody>
+          {invoice.items.map((it) => (
+            <tr key={it.id}>
+              <td>{it.productName}</td>
+              <td className="lg-mono" style={{ textAlign: "right" }}>{it.qty}</td>
+              <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(it.tp)}</td>
+              <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(it.total)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ borderTop: `1px solid ${T.line}`, paddingTop: 10, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}><span>Invoice total</span><span className="lg-mono" style={{ fontWeight: 700 }}>{fmtMoney(invoice.grandTotal)}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4, color: T.green }}><span>Cash received</span><span className="lg-mono" style={{ fontWeight: 600 }}>{fmtMoney(invoice.cashReceived)}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, fontWeight: 700, color: invoice.balanceDue > 0 ? T.rule : T.green }}><span>Balance due</span><span className="lg-mono">{fmtMoney(invoice.balanceDue)}</span></div>
+      </div>
+      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center" }} onClick={downloadPDF}>
+        <Download size={14} /> Download PDF
       </button>
     </ModalShell>
   );
