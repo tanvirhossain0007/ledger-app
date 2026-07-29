@@ -215,6 +215,72 @@ function downloadCSV(filename, rows) {
   URL.revokeObjectURL(url);
 }
 
+// Generic PDF table export — used for every Multi Plug report.
+// columns: [{ header, key, align? }], rows: [{ ...key: value }], totalsRow (optional): same shape as a row, printed bold at the bottom.
+async function downloadPDFTable({ filename, title, subtitle, columns, rows, totalsRow }) {
+  const { jsPDF } = await import("jspdf");
+  const doc = new jsPDF({ unit: "pt", format: "a4", orientation: columns.length > 6 ? "landscape" : "portrait" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const marginX = 36;
+  const usableWidth = pageWidth - marginX * 2;
+  const colWidth = usableWidth / columns.length;
+  let y = 46;
+
+  const drawHeader = () => {
+    doc.setFontSize(15); doc.setFont(undefined, "bold");
+    doc.text(title, marginX, y);
+    y += 18;
+    if (subtitle) { doc.setFontSize(9); doc.setFont(undefined, "normal"); doc.text(subtitle, marginX, y); y += 14; }
+    doc.setFontSize(8.5); doc.setFont(undefined, "normal"); doc.setTextColor(120);
+    doc.text(`Generated ${fmtDateDMY(todayISO())}`, marginX, y);
+    doc.setTextColor(0);
+    y += 16;
+    doc.setFontSize(9); doc.setFont(undefined, "bold");
+    columns.forEach((c, i) => {
+      const x = marginX + i * colWidth;
+      doc.text(String(c.header), c.align === "right" ? x + colWidth - 4 : x, y, c.align === "right" ? { align: "right" } : undefined);
+    });
+    y += 5;
+    doc.setLineWidth(0.5);
+    doc.line(marginX, y, pageWidth - marginX, y);
+    y += 14;
+    doc.setFont(undefined, "normal");
+  };
+
+  drawHeader();
+
+  rows.forEach((row) => {
+    if (y > pageHeight - 50) {
+      doc.addPage();
+      y = 46;
+      drawHeader();
+    }
+    doc.setFontSize(8.5);
+    columns.forEach((c, i) => {
+      const x = marginX + i * colWidth;
+      const val = String(row[c.key] ?? "");
+      doc.text(val, c.align === "right" ? x + colWidth - 4 : x, y, c.align === "right" ? { align: "right" } : undefined);
+    });
+    y += 15;
+  });
+
+  if (totalsRow) {
+    if (y > pageHeight - 50) { doc.addPage(); y = 46; drawHeader(); }
+    doc.setLineWidth(0.5);
+    doc.line(marginX, y - 4, pageWidth - marginX, y - 4);
+    y += 8;
+    doc.setFont(undefined, "bold");
+    columns.forEach((c, i) => {
+      const x = marginX + i * colWidth;
+      const val = String(totalsRow[c.key] ?? "");
+      doc.text(val, c.align === "right" ? x + colWidth - 4 : x, y, c.align === "right" ? { align: "right" } : undefined);
+    });
+  }
+
+  doc.save(filename);
+}
+
 export default function App() {
   const [dark, setDark] = useState(false);
   const T = dark ? DARK : TOKENS;
@@ -642,8 +708,8 @@ export default function App() {
 
   // One invoice, many product line items, plus an optional "cash received now" payment —
   // all saved in a single state update so nothing can race/fail out of order.
-  const saveMpInvoice = ({ date, customerId, salesmanId, items, cashReceived }) => {
-    const invoiceNo = nextMpSaleInvoiceNo();
+  const saveMpInvoice = ({ date, customerId, salesmanId, items, cashReceived, editingInvoiceNo }) => {
+    const invoiceNo = editingInvoiceNo || nextMpSaleInvoiceNo();
     const saleRows = items.map((it) => ({
       id: uid("MPSAL"), invoiceNo, date, customerId, salesmanId,
       productId: it.productId, productName: it.productName, qty: it.qty, tp: it.tp,
@@ -655,14 +721,31 @@ export default function App() {
     if (cash > 0) {
       paymentRow = { id: uid("MPPAY"), date, customerId, amount: Math.min(cash, grandTotal), method: "Cash", reference: invoiceNo, remarks: "Cash received at sale" };
     }
+    updateDb((prev) => {
+      // Editing: drop this invoice's old line items and its old cash-at-sale payment (if any) before adding the new ones.
+      const mpSales = editingInvoiceNo
+        ? [...prev.mpSales.filter((s) => s.invoiceNo !== editingInvoiceNo), ...saleRows]
+        : [...prev.mpSales, ...saleRows];
+      const mpPaymentsWithoutOld = editingInvoiceNo
+        ? prev.mpPayments.filter((p) => !(p.reference === editingInvoiceNo && p.remarks === "Cash received at sale"))
+        : prev.mpPayments;
+      const mpPayments = paymentRow ? [...mpPaymentsWithoutOld, paymentRow] : mpPaymentsWithoutOld;
+      return {
+        ...prev, mpSales, mpPayments,
+        mpSettings: editingInvoiceNo ? prev.mpSettings : { ...prev.mpSettings, saleInvoiceSeq: prev.mpSettings.saleInvoiceSeq + 1 },
+      };
+    });
+    notify(editingInvoiceNo ? "Invoice updated" : "Invoice saved — stock, due balance and commission updated");
+    return { invoiceNo, date, customerId, salesmanId, items: saleRows, grandTotal, cashReceived: cash, balanceDue: Math.max(grandTotal - cash, 0) };
+  };
+
+  const deleteMpInvoice = (invoiceNo) => {
     updateDb((prev) => ({
       ...prev,
-      mpSales: [...prev.mpSales, ...saleRows],
-      mpPayments: paymentRow ? [...prev.mpPayments, paymentRow] : prev.mpPayments,
-      mpSettings: { ...prev.mpSettings, saleInvoiceSeq: prev.mpSettings.saleInvoiceSeq + 1 },
+      mpSales: prev.mpSales.filter((s) => s.invoiceNo !== invoiceNo),
+      mpPayments: prev.mpPayments.filter((p) => !(p.reference === invoiceNo && p.remarks === "Cash received at sale")),
     }));
-    notify("Invoice saved — stock, due balance and commission updated");
-    return { invoiceNo, date, customerId, salesmanId, items: saleRows, grandTotal, cashReceived: cash, balanceDue: Math.max(grandTotal - cash, 0) };
+    notify("Invoice deleted", "danger");
   };
 
   const saveMpPayment = (data) => mpSave("mpPayments", "MPPAY", data, "Payment recorded");
@@ -782,7 +865,7 @@ export default function App() {
           saveMpSalesman={saveMpSalesman} deleteMpSalesman={deleteMpSalesman}
           saveMpProduct={saveMpProduct} deleteMpProduct={deleteMpProduct}
           saveMpPurchase={saveMpPurchase} deleteMpPurchase={deleteMpPurchase}
-          saveMpSale={saveMpSale} deleteMpSale={deleteMpSale} saveMpInvoice={saveMpInvoice}
+          saveMpSale={saveMpSale} deleteMpSale={deleteMpSale} saveMpInvoice={saveMpInvoice} deleteMpInvoice={deleteMpInvoice}
           saveMpPayment={saveMpPayment} deleteMpPayment={deleteMpPayment}
           saveMpSupplierPayment={saveMpSupplierPayment} deleteMpSupplierPayment={deleteMpSupplierPayment}
           saveMpSettings={saveMpSettings}
@@ -2035,8 +2118,16 @@ function MpDashboard({ T, db, mpTotals, mpStockReport }) {
     { label: "Stock value (at TP)", value: fmtMoney(mpTotals.totalStockTPValue), tone: "good", accent: "#2E8B8B" },
     { label: "Total salesman commission", value: fmtMoney(mpTotals.totalCommission), accent: "#A34C6B" },
   ];
+  const exportPDF = () => downloadPDFTable({
+    filename: "multiplug-dashboard-summary.pdf", title: "Multi Plug — Dashboard Summary",
+    columns: [{ header: "Metric", key: "label" }, { header: "Value", key: "value", align: "right" }],
+    rows: cards.map((c) => ({ label: c.label, value: String(c.value) })),
+  });
   return (
     <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+        <button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px,1fr))", gap: 12, marginBottom: 20 }}>
         {cards.map((c) => <StatCard key={c.label} T={T} {...c} />)}
       </div>
@@ -2063,20 +2154,29 @@ function MpDashboard({ T, db, mpTotals, mpStockReport }) {
 function MpStockReportPage({ T, mpStockReport, db, saveMpProduct, deleteMpProduct }) {
   const [editModal, setEditModal] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
-  const exportCSV = () => downloadCSV("multiplug-stock-report.csv", mpStockReport.map((r) => ({
-    Product: r.productName, "Bought from": r.suppliers.join(", "), "Total purchased": r.totalPurchasedQty,
-    "Total sold": r.totalSoldQty, "In stock": r.remainingQty, "Avg DP": r.avgDP.toFixed(2), "Auto TP": r.autoTP.toFixed(2),
-    "Total DP value": r.totalDPValue.toFixed(2), "Total TP value": r.totalTPValue.toFixed(2),
-  })));
   const totalDP = mpStockReport.reduce((a, r) => a + r.totalDPValue, 0);
   const totalTP = mpStockReport.reduce((a, r) => a + r.totalTPValue, 0);
   const totalPurchasedQty = mpStockReport.reduce((a, r) => a + r.totalPurchasedQty, 0);
   const totalSoldQty = mpStockReport.reduce((a, r) => a + r.totalSoldQty, 0);
   const totalInStock = mpStockReport.reduce((a, r) => a + r.remainingQty, 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "multiplug-stock-report.pdf", title: "Multi Plug — Stock Report", subtitle: "TP auto-suggested from DP using the margin % set in Settings",
+    columns: [
+      { header: "Product", key: "product" }, { header: "Bought from", key: "suppliers" },
+      { header: "Purchased", key: "purchased", align: "right" }, { header: "Sold", key: "sold", align: "right" }, { header: "In stock", key: "stock", align: "right" },
+      { header: "DP (avg)", key: "dp", align: "right" }, { header: "TP (auto)", key: "tp", align: "right" },
+      { header: "Total DP value", key: "dpValue", align: "right" }, { header: "Total TP value", key: "tpValue", align: "right" },
+    ],
+    rows: mpStockReport.map((r) => ({
+      product: r.productName, suppliers: r.suppliers.join(", ") || "—", purchased: r.totalPurchasedQty, sold: r.totalSoldQty, stock: r.remainingQty,
+      dp: fmtMoney(r.avgDP), tp: fmtMoney(r.autoTP), dpValue: fmtMoney(r.totalDPValue), tpValue: fmtMoney(r.totalTPValue),
+    })),
+    totalsRow: { product: "Total", purchased: totalPurchasedQty, sold: totalSoldQty, stock: totalInStock, dpValue: fmtMoney(totalDP), tpValue: fmtMoney(totalTP) },
+  });
   return (
     <div>
       <PageHeader T={T} title="Stock report" subtitle="TP is auto-suggested from DP using the margin % set in Settings"
-        action={<button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportCSV}><Download size={14} /> Export CSV</button>} />
+        action={<button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button>} />
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
           <thead>
@@ -2161,10 +2261,19 @@ function MpCustomersPage({ T, db, saveMpCustomer, deleteMpCustomer, mpCustomerBa
     return matchQ && matchStatus;
   });
   const totalBalance = filtered.reduce((a, c) => a + mpCustomerBalance(c.id), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "multiplug-customers.pdf", title: "Multi Plug — Customers Report",
+    columns: [
+      { header: "Name", key: "name" }, { header: "Mobile", key: "mobile" }, { header: "Address", key: "address" },
+      { header: "Status", key: "status" }, { header: "Balance", key: "balance", align: "right" },
+    ],
+    rows: filtered.map((c) => ({ name: c.name, mobile: c.mobile || "—", address: c.address || "—", status: c.status, balance: fmtMoney(mpCustomerBalance(c.id)) })),
+    totalsRow: { name: "Total", balance: fmtMoney(totalBalance) },
+  });
   return (
     <div>
       <PageHeader T={T} title="Multi Plug customers" subtitle={`${db.mpCustomers.length} total`}
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add customer</button>} />
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add customer</button></div>} />
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, maxWidth: 280 }}>
           <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
@@ -2225,10 +2334,19 @@ function MpSuppliersPage({ T, db, saveMpSupplier, deleteMpSupplier, mpSupplierBa
     return matchQ && matchStatus;
   });
   const totalPayable = filtered.reduce((a, s) => a + mpSupplierBalance(s.id), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "multiplug-suppliers.pdf", title: "Multi Plug — Suppliers Report",
+    columns: [
+      { header: "Name", key: "name" }, { header: "Mobile", key: "mobile" }, { header: "Address", key: "address" },
+      { header: "Status", key: "status" }, { header: "Payable", key: "payable", align: "right" },
+    ],
+    rows: filtered.map((s) => ({ name: s.name, mobile: s.mobile || "—", address: s.address || "—", status: s.status, payable: fmtMoney(mpSupplierBalance(s.id)) })),
+    totalsRow: { name: "Total", payable: fmtMoney(totalPayable) },
+  });
   return (
     <div>
       <PageHeader T={T} title="Multi Plug suppliers" subtitle={`${db.mpSuppliers.length} total`}
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add supplier</button>} />
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add supplier</button></div>} />
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, maxWidth: 280 }}>
           <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
@@ -2326,10 +2444,23 @@ function MpSalesmenPage({ T, db, saveMpSalesman, deleteMpSalesman, mpCustomerBal
     return { totalSold, totalQty, totalDiscount, commission, byCustomer };
   };
 
+  const exportPDF = () => downloadPDFTable({
+    filename: "multiplug-salesmen.pdf", title: "Multi Plug — Salesmen Report",
+    columns: [
+      { header: "Salesman", key: "name" }, { header: "Commission %", key: "pct", align: "right" },
+      { header: "Qty sold", key: "qty", align: "right" }, { header: "Discount given", key: "discount", align: "right" },
+      { header: "Total sales", key: "total", align: "right" }, { header: "Commission earned", key: "commission", align: "right" },
+    ],
+    rows: filteredSalesmen.map((sm) => {
+      const st = salesmanStats(sm.id);
+      return { name: sm.name, pct: sm.commissionPercent ? `${sm.commissionPercent}%` : "Not set", qty: st.totalQty, discount: fmtMoney(st.totalDiscount), total: fmtMoney(st.totalSold), commission: fmtMoney(st.commission) };
+    }),
+  });
+
   return (
     <div>
       <PageHeader T={T} title="Salesmen" subtitle="Sales, discounts given, and commission per salesman"
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add salesman</button>} />
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add salesman</button></div>} />
       <div style={{ position: "relative", maxWidth: 280, marginBottom: 14 }}>
         <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
         <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search name or mobile" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -2421,10 +2552,24 @@ function MpPurchasePage({ T, db, saveMpPurchase, deleteMpPurchase, saveMpProduct
     const matchTo = !to || p.date <= to;
     return matchQ && matchFrom && matchTo;
   });
+  const totalQty = rows.reduce((a, p) => a + Number(p.qty), 0);
+  const totalValue = rows.reduce((a, p) => a + Number(p.qty) * Number(p.dp), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "multiplug-purchases.pdf", title: "Multi Plug — Purchase Report",
+    columns: [
+      { header: "Invoice", key: "invoice" }, { header: "Date", key: "date" }, { header: "Supplier", key: "supplier" }, { header: "Product", key: "product" },
+      { header: "Qty", key: "qty", align: "right" }, { header: "DP", key: "dp", align: "right" }, { header: "Total", key: "total", align: "right" },
+    ],
+    rows: rows.map((p) => {
+      const sup = db.mpSuppliers.find((s) => s.id === p.supplierId);
+      return { invoice: p.invoiceNo, date: fmtDateDMY(p.date), supplier: sup ? sup.name : "—", product: p.productName, qty: p.qty, dp: fmtMoney(p.dp), total: fmtMoney(Number(p.qty) * Number(p.dp)) };
+    }),
+    totalsRow: { invoice: "Total", qty: totalQty, total: fmtMoney(totalValue) },
+  });
   return (
     <div>
       <PageHeader T={T} title="Purchase entry" subtitle="Buying stock from a supplier at DP (Dealer Price) — this adds to stock"
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpSuppliers.length}><Plus size={14} /> New purchase</button>} />
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpSuppliers.length}><Plus size={14} /> New purchase</button></div>} />
       {!db.mpSuppliers.length && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a Multi Plug supplier first (Suppliers tab).</div>}
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
@@ -2457,6 +2602,17 @@ function MpPurchasePage({ T, db, saveMpPurchase, deleteMpPurchase, saveMpProduct
             })}
             {!rows.length && <tr><td colSpan={8} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No purchases recorded yet.</td></tr>}
           </tbody>
+          {!!rows.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={4} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{totalQty}</td>
+                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalValue)}</td>
+                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </Card>
       {modal && <MpPurchaseModal T={T} db={db} nextMpPurchaseInvoiceNo={nextMpPurchaseInvoiceNo} onClose={() => setModal(null)} onSave={(d, newProduct) => { saveMpPurchase(d, newProduct); setModal(null); }} />}
@@ -2526,45 +2682,78 @@ function MpPurchaseModal({ T, db, nextMpPurchaseInvoiceNo, onClose, onSave }) {
   );
 }
 
-function MpSalesPage({ T, db, saveMpSale, deleteMpSale, saveMpInvoice, mpStockReport, nextMpSaleInvoiceNo }) {
-  const [modal, setModal] = useState(null);
+function MpSalesPage({ T, db, deleteMpInvoice, saveMpInvoice, mpStockReport, nextMpSaleInvoiceNo }) {
+  const [modal, setModal] = useState(null); // {} for new, invoice object for edit, null closed
   const [confirmDel, setConfirmDel] = useState(null);
   const [invoicePreview, setInvoicePreview] = useState(null);
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [salesmanFilter, setSalesmanFilter] = useState("All");
-  const rows = [...db.mpSales].sort((a, b) => (b.date || "").localeCompare(a.date || "")).filter((s) => {
-    const cust = db.mpCustomers.find((c) => c.id === s.customerId);
-    const matchQ = !q || s.productName.toLowerCase().includes(q.toLowerCase()) || (cust && cust.name.toLowerCase().includes(q.toLowerCase()));
-    const matchFrom = !from || s.date >= from;
-    const matchTo = !to || s.date <= to;
-    const matchSalesman = salesmanFilter === "All" || s.salesmanId === salesmanFilter;
-    return matchQ && matchFrom && matchTo && matchSalesman;
-  });
 
-  // DP (cost) isn't stored on the sale itself — it's looked up from the product's
-  // current average purchase price (Stock Report), same weighted-average method used there.
-  const rowsWithProfit = rows.map((s) => {
+  // DP (cost) isn't stored on each sale line — it's looked up from the product's current
+  // average purchase price (Stock Report), same weighted-average method used there.
+  const withProfit = (s) => {
     const stockRow = mpStockReport.find((r) => r.productId === s.productId);
     const dpUnit = stockRow ? stockRow.avgDP : 0;
     const dpCost = dpUnit * Number(s.qty);
-    const profit = Number(s.total) - dpCost;
-    return { ...s, dpUnit, dpCost, profit };
+    return { ...s, dpUnit, dpCost, profit: Number(s.total) - dpCost };
+  };
+
+  // Group every sale line item by its shared invoice number into one invoice per row.
+  const invoiceMap = {};
+  db.mpSales.forEach((s) => {
+    if (!invoiceMap[s.invoiceNo]) invoiceMap[s.invoiceNo] = { invoiceNo: s.invoiceNo, date: s.date, customerId: s.customerId, salesmanId: s.salesmanId, items: [] };
+    invoiceMap[s.invoiceNo].items.push(withProfit(s));
+  });
+  const invoices = Object.values(invoiceMap).map((inv) => {
+    const qty = inv.items.reduce((a, it) => a + Number(it.qty), 0);
+    const discount = inv.items.reduce((a, it) => a + Number(it.discount || 0), 0);
+    const total = inv.items.reduce((a, it) => a + Number(it.total), 0);
+    const profit = inv.items.reduce((a, it) => a + it.profit, 0);
+    const cashReceived = db.mpPayments.filter((p) => p.reference === inv.invoiceNo && p.remarks === "Cash received at sale").reduce((a, p) => a + Number(p.amount), 0);
+    return { ...inv, qty, discount, total, profit, cashReceived, balanceDue: Math.max(total - cashReceived, 0) };
+  }).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
+  const filtered = invoices.filter((inv) => {
+    const cust = db.mpCustomers.find((c) => c.id === inv.customerId);
+    const matchQ = !q || inv.items.some((it) => it.productName.toLowerCase().includes(q.toLowerCase())) || (cust && cust.name.toLowerCase().includes(q.toLowerCase()));
+    const matchFrom = !from || inv.date >= from;
+    const matchTo = !to || inv.date <= to;
+    const matchSalesman = salesmanFilter === "All" || inv.salesmanId === salesmanFilter;
+    return matchQ && matchFrom && matchTo && matchSalesman;
   });
 
-  const totals = rowsWithProfit.reduce((a, s) => ({
-    qty: a.qty + Number(s.qty),
-    discount: a.discount + Number(s.discount || 0),
-    total: a.total + Number(s.total),
-    dpCost: a.dpCost + s.dpCost,
-    profit: a.profit + s.profit,
-  }), { qty: 0, discount: 0, total: 0, dpCost: 0, profit: 0 });
+  const totals = filtered.reduce((a, inv) => ({
+    qty: a.qty + inv.qty, discount: a.discount + inv.discount, total: a.total + inv.total, profit: a.profit + inv.profit,
+  }), { qty: 0, discount: 0, total: 0, profit: 0 });
+
+  const exportPDF = () => downloadPDFTable({
+    filename: "multiplug-sales.pdf", title: "Multi Plug — Sales Report (by invoice)",
+    columns: [
+      { header: "Invoice", key: "invoice" }, { header: "Date", key: "date" }, { header: "Customer", key: "customer" }, { header: "Salesman", key: "salesman" }, { header: "Items", key: "items" },
+      { header: "Qty", key: "qty", align: "right" }, { header: "Discount", key: "discount", align: "right" }, { header: "Total", key: "total", align: "right" }, { header: "Profit", key: "profit", align: "right" },
+    ],
+    rows: filtered.map((inv) => {
+      const cust = db.mpCustomers.find((c) => c.id === inv.customerId);
+      const sm = db.mpSalesmen.find((x) => x.id === inv.salesmanId);
+      return {
+        invoice: inv.invoiceNo, date: fmtDateDMY(inv.date), customer: cust ? cust.name : "—", salesman: sm ? sm.name : "—",
+        items: inv.items.map((it) => it.productName).join(", "), qty: inv.qty, discount: fmtMoney(inv.discount), total: fmtMoney(inv.total), profit: fmtMoney(inv.profit),
+      };
+    }),
+    totalsRow: { invoice: "Total", qty: totals.qty, discount: fmtMoney(totals.discount), total: fmtMoney(totals.total), profit: fmtMoney(totals.profit) },
+  });
+
+  const openPreview = (inv) => setInvoicePreview({
+    invoiceNo: inv.invoiceNo, date: inv.date, customerId: inv.customerId, salesmanId: inv.salesmanId,
+    items: inv.items, grandTotal: inv.total, cashReceived: inv.cashReceived, balanceDue: inv.balanceDue,
+  });
 
   return (
     <div>
       <PageHeader T={T} title="Sales entry" subtitle="One invoice per customer — add several products, take cash payment, and download a PDF"
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpCustomers.length || !db.mpProducts.length}><Plus size={14} /> New invoice</button>} />
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpCustomers.length || !db.mpProducts.length}><Plus size={14} /> New invoice</button></div>} />
       {(!db.mpCustomers.length || !db.mpProducts.length) && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a customer and at least one product (via Purchase entry) first.</div>}
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
@@ -2580,61 +2769,71 @@ function MpSalesPage({ T, db, saveMpSale, deleteMpSale, saveMpInvoice, mpStockRe
       </div>
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
-          <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Salesman</th><th>Product</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>DP</th><th style={{ textAlign: "right" }}>TP</th><th style={{ textAlign: "right" }}>Discount</th><th style={{ textAlign: "right" }}>Total</th><th style={{ textAlign: "right" }}>Profit</th><th></th></tr></thead>
+          <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Salesman</th><th>Items</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Discount</th><th style={{ textAlign: "right" }}>Total</th><th style={{ textAlign: "right" }}>Profit</th><th style={{ textAlign: "right" }}>Balance</th><th></th></tr></thead>
           <tbody>
-            {rowsWithProfit.map((s) => {
-              const cust = db.mpCustomers.find((c) => c.id === s.customerId);
-              const sm = db.mpSalesmen.find((x) => x.id === s.salesmanId);
+            {filtered.map((inv) => {
+              const cust = db.mpCustomers.find((c) => c.id === inv.customerId);
+              const sm = db.mpSalesmen.find((x) => x.id === inv.salesmanId);
               return (
-                <tr key={s.id}>
-                  <td className="lg-mono">{s.invoiceNo}</td>
-                  <td className="lg-mono">{fmtDateDMY(s.date)}</td>
+                <tr key={inv.invoiceNo}>
+                  <td>
+                    <button onClick={() => openPreview(inv)} className="lg-mono" style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0, fontWeight: 600, color: T.ink, textDecoration: "underline", textDecorationColor: T.line, fontSize: 12.5 }}>
+                      {inv.invoiceNo}
+                    </button>
+                  </td>
+                  <td className="lg-mono">{fmtDateDMY(inv.date)}</td>
                   <td>{cust ? cust.name : "—"}</td>
                   <td>{sm ? sm.name : "—"}</td>
-                  <td>{s.productName}</td>
-                  <td className="lg-mono" style={{ textAlign: "right" }}>{s.qty}</td>
-                  <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(s.dpUnit)}</td>
-                  <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(s.tp)}</td>
-                  <td className="lg-mono" style={{ textAlign: "right", color: T.rule }}>{fmtMoney(s.discount || 0)}</td>
-                  <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(s.total)}</td>
-                  <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600, color: s.profit >= 0 ? T.green : T.rule }}>{fmtMoney(s.profit)}</td>
+                  <td style={{ fontSize: 12, color: T.slateLight, maxWidth: 180 }}>{inv.items.map((it) => it.productName).join(", ")}</td>
+                  <td className="lg-mono" style={{ textAlign: "right" }}>{inv.qty}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", color: T.rule }}>{fmtMoney(inv.discount)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(inv.total)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600, color: inv.profit >= 0 ? T.green : T.rule }}>{fmtMoney(inv.profit)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", color: inv.balanceDue > 0 ? T.rule : T.green }}>{fmtMoney(inv.balanceDue)}</td>
                   <td style={{ whiteSpace: "nowrap" }}>
-                    <button onClick={() => setConfirmDel(s)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                    <button onClick={() => setModal(inv)} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                    <button onClick={() => setConfirmDel(inv)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
                   </td>
                 </tr>
               );
             })}
-            {!rowsWithProfit.length && <tr><td colSpan={12} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No sales recorded yet.</td></tr>}
+            {!filtered.length && <tr><td colSpan={11} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No invoices found.</td></tr>}
           </tbody>
-          {!!rowsWithProfit.length && (
+          {!!filtered.length && (
             <tfoot>
               <tr>
                 <td colSpan={5} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
                 <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{totals.qty}</td>
-                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totals.dpCost)}</td>
-                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
                 <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, color: T.rule, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totals.discount)}</td>
                 <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totals.total)}</td>
                 <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, color: totals.profit >= 0 ? T.green : T.rule, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totals.profit)}</td>
-                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+                <td colSpan={2} style={{ borderTop: `2px solid ${T.line}` }}></td>
               </tr>
             </tfoot>
           )}
         </table>
       </Card>
-      {modal && <MpInvoiceModal T={T} db={db} mpStockReport={mpStockReport} nextMpSaleInvoiceNo={nextMpSaleInvoiceNo} onClose={() => setModal(null)} onSave={(invoiceData) => { const invoice = saveMpInvoice(invoiceData); setModal(null); setInvoicePreview(invoice); }} />}
+      {modal && (
+        <MpInvoiceModal T={T} db={db} mpStockReport={mpStockReport} nextMpSaleInvoiceNo={nextMpSaleInvoiceNo}
+          initialInvoice={modal.invoiceNo ? { invoiceNo: modal.invoiceNo, date: modal.date, customerId: modal.customerId, salesmanId: modal.salesmanId, items: modal.items, cashReceived: modal.cashReceived } : null}
+          onClose={() => setModal(null)}
+          onSave={(invoiceData) => { const invoice = saveMpInvoice(invoiceData); setModal(null); setInvoicePreview(invoice); }} />
+      )}
       {invoicePreview && <MpInvoicePreviewModal T={T} db={db} invoice={invoicePreview} onClose={() => setInvoicePreview(null)} />}
-      {confirmDel && <ConfirmModal T={T} title="Delete sale?" message="This will restore stock and reduce the customer's due." onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteMpSale(confirmDel.id); setConfirmDel(null); }} />}
+      {confirmDel && <ConfirmModal T={T} title="Delete invoice?" message={`This removes all ${confirmDel.items.length} item(s) on invoice ${confirmDel.invoiceNo}, restores stock, and removes any cash payment tied to it.`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteMpInvoice(confirmDel.invoiceNo); setConfirmDel(null); }} />}
     </div>
   );
 }
 
-function MpInvoiceModal({ T, db, mpStockReport, nextMpSaleInvoiceNo, onClose, onSave }) {
-  const [date, setDate] = useState(todayISO());
-  const [customerId, setCustomerId] = useState(db.mpCustomers[0]?.id || "");
-  const [salesmanId, setSalesmanId] = useState(db.mpSalesmen[0]?.id || "");
-  const [items, setItems] = useState([]);
-  const [cashReceived, setCashReceived] = useState(0);
+function MpInvoiceModal({ T, db, mpStockReport, nextMpSaleInvoiceNo, onClose, onSave, initialInvoice }) {
+  const isEditing = !!initialInvoice;
+  const [date, setDate] = useState(initialInvoice?.date || todayISO());
+  const [customerId, setCustomerId] = useState(initialInvoice?.customerId || db.mpCustomers[0]?.id || "");
+  const [salesmanId, setSalesmanId] = useState(initialInvoice?.salesmanId || db.mpSalesmen[0]?.id || "");
+  const [items, setItems] = useState(
+    initialInvoice ? initialInvoice.items.map((it) => ({ key: uid("LINE"), productId: it.productId, productName: it.productName, qty: Number(it.qty), tp: Number(it.tp), discount: Number(it.discount || 0) })) : []
+  );
+  const [cashReceived, setCashReceived] = useState(initialInvoice?.cashReceived || 0);
 
   // Line-item entry (product/qty/tp/discount) before adding to the invoice list below.
   const [line, setLine] = useState({ productId: db.mpProducts[0]?.id || "", qty: 1, tp: 0, discount: 0 });
@@ -2662,8 +2861,8 @@ function MpInvoiceModal({ T, db, mpStockReport, nextMpSaleInvoiceNo, onClose, on
   const custLabel = (c) => `${c.name}${c.address ? " — " + c.address : c.mobile ? " — " + c.mobile : ""}`;
 
   return (
-    <ModalShell T={T} title="New invoice" onClose={onClose}>
-      <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 8 }}>Invoice: <span className="lg-mono">{nextMpSaleInvoiceNo()}</span></div>
+    <ModalShell T={T} title={isEditing ? "Edit invoice" : "New invoice"} onClose={onClose}>
+      <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 8 }}>Invoice: <span className="lg-mono">{isEditing ? initialInvoice.invoiceNo : nextMpSaleInvoiceNo()}</span></div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <Field T={T} label="Date"><input className="lg-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
         <Field T={T} label="Salesman">
@@ -2729,8 +2928,8 @@ function MpInvoiceModal({ T, db, mpStockReport, nextMpSaleInvoiceNo, onClose, on
 
       <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center" }}
         disabled={!customerId || !salesmanId || !items.length}
-        onClick={() => onSave({ date, customerId, salesmanId, items, cashReceived: cash })}>
-        Save invoice
+        onClick={() => onSave({ date, customerId, salesmanId, items, cashReceived: cash, editingInvoiceNo: isEditing ? initialInvoice.invoiceNo : undefined })}>
+        {isEditing ? "Update invoice" : "Save invoice"}
       </button>
     </ModalShell>
   );
@@ -2838,10 +3037,23 @@ function MpPaymentsPage({ T, db, saveMpPayment, deleteMpPayment }) {
     const matchTo = !to || p.date <= to;
     return matchQ && matchFrom && matchTo;
   });
+  const totalAmount = rows.reduce((a, p) => a + Number(p.amount), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "multiplug-cash-receiving.pdf", title: "Multi Plug — Cash Receiving Report",
+    columns: [
+      { header: "Date", key: "date" }, { header: "Customer", key: "customer" },
+      { header: "Amount", key: "amount", align: "right" }, { header: "Method", key: "method" }, { header: "Reference", key: "reference" },
+    ],
+    rows: rows.map((p) => {
+      const cust = db.mpCustomers.find((c) => c.id === p.customerId);
+      return { date: fmtDateDMY(p.date), customer: cust ? cust.name : "—", amount: fmtMoney(p.amount), method: p.method, reference: p.reference || "—" };
+    }),
+    totalsRow: { date: "Total", amount: fmtMoney(totalAmount) },
+  });
   return (
     <div>
       <PageHeader T={T} title="Cash receiving" subtitle="Money received from a Multi Plug customer"
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpCustomers.length}><Plus size={14} /> New payment</button>} />
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpCustomers.length}><Plus size={14} /> New payment</button></div>} />
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
           <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
@@ -2871,6 +3083,15 @@ function MpPaymentsPage({ T, db, saveMpPayment, deleteMpPayment }) {
             })}
             {!rows.length && <tr><td colSpan={6} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No payments recorded yet.</td></tr>}
           </tbody>
+          {!!rows.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={2} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ fontWeight: 700, color: T.green, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalAmount)}</td>
+                <td colSpan={3} style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </Card>
       {modal && (
@@ -2920,10 +3141,23 @@ function MpSupplierPaymentsPage({ T, db, saveMpSupplierPayment, deleteMpSupplier
     const matchTo = !to || p.date <= to;
     return matchQ && matchFrom && matchTo;
   });
+  const totalAmount = rows.reduce((a, p) => a + Number(p.amount), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "multiplug-supplier-payments.pdf", title: "Multi Plug — Supplier Payments Report",
+    columns: [
+      { header: "Date", key: "date" }, { header: "Supplier", key: "supplier" },
+      { header: "Amount", key: "amount", align: "right" }, { header: "Method", key: "method" }, { header: "Reference", key: "reference" },
+    ],
+    rows: rows.map((p) => {
+      const sup = db.mpSuppliers.find((s) => s.id === p.supplierId);
+      return { date: fmtDateDMY(p.date), supplier: sup ? sup.name : "—", amount: fmtMoney(p.amount), method: p.method, reference: p.reference || "—" };
+    }),
+    totalsRow: { date: "Total", amount: fmtMoney(totalAmount) },
+  });
   return (
     <div>
       <PageHeader T={T} title="Payments to suppliers" subtitle="Money paid out to a Multi Plug supplier"
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpSuppliers.length}><Plus size={14} /> New payment</button>} />
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpSuppliers.length}><Plus size={14} /> New payment</button></div>} />
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
           <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
@@ -2953,6 +3187,15 @@ function MpSupplierPaymentsPage({ T, db, saveMpSupplierPayment, deleteMpSupplier
             })}
             {!rows.length && <tr><td colSpan={6} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No payments recorded yet.</td></tr>}
           </tbody>
+          {!!rows.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={2} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ fontWeight: 700, color: T.rule, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalAmount)}</td>
+                <td colSpan={3} style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </Card>
       {modal && (
@@ -2993,8 +3236,21 @@ function MpSettingsPage({ T, db, saveMpSettings }) {
   const [openingCash, setOpeningCash] = useState(db.mpSettings.openingCash);
   const [marginPercent, setMarginPercent] = useState(db.mpSettings.marginPercent ?? "");
   const notSetYet = db.mpSettings.marginPercent === null || db.mpSettings.marginPercent === undefined || db.mpSettings.marginPercent === "";
+  const exportPDF = () => downloadPDFTable({
+    filename: "multiplug-settings-snapshot.pdf", title: "Multi Plug — Settings Snapshot",
+    columns: [{ header: "Setting", key: "label" }, { header: "Value", key: "value", align: "right" }],
+    rows: [
+      { label: "Opening cash balance", value: fmtMoney(db.mpSettings.openingCash) },
+      { label: "Default margin %", value: notSetYet ? "Not set" : `${db.mpSettings.marginPercent}%` },
+      { label: "Purchase invoice sequence", value: String(db.mpSettings.purchaseInvoiceSeq) },
+      { label: "Sale invoice sequence", value: String(db.mpSettings.saleInvoiceSeq) },
+    ],
+  });
   return (
     <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+        <button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button>
+      </div>
       <Card T={T} style={{ maxWidth: 420 }}>
         <Field T={T} label="Multi Plug opening cash balance"><input className="lg-input" type="number" value={openingCash} onChange={(e) => setOpeningCash(e.target.value)} /></Field>
         <Field T={T} label="Default margin % (used to auto-suggest TP from DP) — set this yourself, no default">
