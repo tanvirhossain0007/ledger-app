@@ -811,7 +811,7 @@ export default function App() {
     <div style={{
       fontFamily: "'Inter', sans-serif",
       backgroundColor: "#0E1A28",
-      backgroundImage: `linear-gradient(rgba(10,18,28,${dark ? 0.72 : 0.42}), rgba(10,18,28,${dark ? 0.8 : 0.48})), url('/arham-bg.jpg')`,
+      backgroundImage: `url('/arham-bg.jpg')`,
       backgroundSize: "cover",
       backgroundPosition: "center",
       backgroundAttachment: "fixed",
