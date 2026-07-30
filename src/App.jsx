@@ -1051,7 +1051,7 @@ function Shell({ T, dark, setDark, logout, title, navItems, view, setView, child
 
         <div style={{
           margin: 10, padding: 16, borderRadius: 14,
-          background: "transparent",
+          background: hexToRgba(T.paper, 0.62), backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
         }}>
           <div key={view} className="page-transition">{children}</div>
         </div>
@@ -1066,7 +1066,7 @@ function Shell({ T, dark, setDark, logout, title, navItems, view, setView, child
       </div>
       <div style={{
         flex: 1, minWidth: 0, padding: 24,
-        background: "transparent",
+        background: hexToRgba(T.paper, 0.62), backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
       }}>
         <div key={view} className="page-transition">{children}</div>
       </div>
