@@ -1051,7 +1051,7 @@ function Shell({ T, dark, setDark, logout, title, navItems, view, setView, child
 
         <div style={{
           margin: 10, padding: 16, borderRadius: 14,
-          background: hexToRgba(T.paper, 0.62), backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+          background: hexToRgba(T.paper, 0.2), backdropFilter: "blur(2px)", WebkitBackdropFilter: "blur(2px)",
         }}>
           <div key={view} className="page-transition">{children}</div>
         </div>
@@ -1066,7 +1066,7 @@ function Shell({ T, dark, setDark, logout, title, navItems, view, setView, child
       </div>
       <div style={{
         flex: 1, minWidth: 0, padding: 24,
-        background: hexToRgba(T.paper, 0.62), backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+        background: hexToRgba(T.paper, 0.2), backdropFilter: "blur(2px)", WebkitBackdropFilter: "blur(2px)",
       }}>
         <div key={view} className="page-transition">{children}</div>
       </div>
@@ -1078,8 +1078,8 @@ function PageHeader({ T, title, subtitle, action }) {
   return (
     <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
       <div>
-        <div className="lg-display" style={{ fontSize: 22, fontWeight: 600, color: T.ink }}>{title}</div>
-        {subtitle && <div style={{ fontSize: 13, color: T.slate, marginTop: 2 }}>{subtitle}</div>}
+        <div className="lg-display" style={{ fontSize: 22, fontWeight: 600, color: T.ink, textShadow: `0 1px 3px ${hexToRgba(T.paper, 0.9)}` }}>{title}</div>
+        {subtitle && <div style={{ fontSize: 13, color: T.slate, marginTop: 2, textShadow: `0 1px 3px ${hexToRgba(T.paper, 0.9)}` }}>{subtitle}</div>}
       </div>
       {action}
     </div>
@@ -2135,7 +2135,7 @@ function MpDashboard({ T, db, mpTotals, mpStockReport }) {
         <table className="lg-table">
           <thead><tr><th>Product</th><th style={{ textAlign: "right" }}>In stock</th><th style={{ textAlign: "right" }}>Avg DP</th><th style={{ textAlign: "right" }}>Auto TP</th></tr></thead>
           <tbody>
-            {mpStockReport.slice(0, 8).map((r) => (
+            {mpStockReport.map((r) => (
               <tr key={r.productId}>
                 <td>{r.productName}</td>
                 <td className="lg-mono" style={{ textAlign: "right" }}>{r.remainingQty}</td>
