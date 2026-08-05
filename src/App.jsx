@@ -33,6 +33,8 @@ const TOKENS = {
   line: "#E4DFD1",
   dangerBg: "#FBEAE8",
   greenBg: "#E9F2ED",
+  buttonFill: "#16283D",
+  modalBg: "#FFFFFF",
 };
 
 const DARK = {
@@ -48,6 +50,27 @@ const DARK = {
   line: "#33414F",
   dangerBg: "#3A2320",
   greenBg: "#1C332A",
+  buttonFill: "#16283D",
+  modalBg: "#22303F",
+};
+
+// Used on every page after login — bright white text, no solid card backgrounds,
+// so the new background photo stays fully visible everywhere.
+const PHOTO = {
+  ink: "#FFFFFF",
+  inkSoft: "#F5F5F5",
+  paper: "transparent",
+  paperCard: "rgba(255,255,255,0.06)",
+  rule: "#FF8A75",
+  green: "#7EE6B8",
+  gold: "#FFD87A",
+  slate: "#E7E7E7",
+  slateLight: "#C2C2C2",
+  line: "rgba(255,255,255,0.28)",
+  dangerBg: "rgba(255,90,90,0.16)",
+  greenBg: "rgba(120,230,180,0.14)",
+  buttonFill: "#16283D",
+  modalBg: "#1B2632",
 };
 
 function uid(prefix) {
@@ -811,7 +834,7 @@ export default function App() {
     <div style={{
       fontFamily: "'Inter', sans-serif",
       backgroundColor: "#0E1A28",
-      backgroundImage: `url('/arham-bg.jpg')`,
+      backgroundImage: `url('${role ? "/app-bg.jpg" : "/arham-bg.jpg"}')`,
       backgroundSize: "cover",
       backgroundPosition: "center",
       backgroundAttachment: "fixed",
@@ -845,7 +868,7 @@ export default function App() {
         <LoginScreen T={T} onAdmin={loginAsAdmin} onCustomer={loginAsCustomer} dark={dark} setDark={setDark} />
       ) : role === "admin" ? (
         <AdminShell
-          T={T} dark={dark} setDark={setDark} view={view} setView={setView} logout={logout}
+          T={PHOTO} dark={dark} setDark={setDark} view={view} setView={setView} logout={logout}
           db={db} totals={totals} monthlyChartData={monthlyChartData} cashFlowSeries={cashFlowSeries}
           topCustomers={topCustomers} outstandingCustomers={outstandingCustomers}
           customerBalance={customerBalance} nextInvoiceNo={nextInvoiceNo}
@@ -872,7 +895,7 @@ export default function App() {
         />
       ) : (
         <CustomerShell
-          T={T} dark={dark} setDark={setDark} view={view} setView={setView} logout={logout}
+          T={PHOTO} dark={dark} setDark={setDark} view={view} setView={setView} logout={logout}
           db={db} customerId={customerId} customerBalance={customerBalance}
         />
       )}
@@ -940,7 +963,7 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
             <label style={{ fontSize: 12, color: T.slate, fontWeight: 600 }}>Password</label>
             <input className="lg-input" type="password" style={{ marginTop: 4, marginBottom: 8 }} value={p} onChange={(e) => setP(e.target.value)} placeholder="••••••••" />
             {err && <div style={{ color: T.rule, fontSize: 12, marginBottom: 10 }}>{err}</div>}
-            <button className="lg-btn" type="submit" disabled={submitting} style={{ width: "100%", background: T.ink, color: "#fff", justifyContent: "center", padding: "10px 0", marginTop: 6, opacity: submitting ? 0.7 : 1 }}>
+            <button className="lg-btn" type="submit" disabled={submitting} style={{ width: "100%", background: T.buttonFill, color: "#fff", justifyContent: "center", padding: "10px 0", marginTop: 6, opacity: submitting ? 0.7 : 1 }}>
               {submitting ? "Signing in…" : "Sign in"}
             </button>
           </form>
@@ -1002,11 +1025,6 @@ function SidebarInner({ T, dark, setDark, logout, title, navItems, view, setView
         <NavButton key={item.key} item={item} active={view === item.key} onClick={() => { setView(item.key); onNavigate && onNavigate(); }} T={T} />
       ))}
       <div style={{ flex: 1 }} />
-      <button onClick={() => setDark(!dark)}
-        onMouseEnter={() => setHoverToggle(true)} onMouseLeave={() => setHoverToggle(false)}
-        style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, background: hoverToggle ? "rgba(255,255,255,.1)" : "transparent", color: "rgba(255,255,255,.6)", transition: "background .15s" }}>
-        {dark ? <Sun size={16} /> : <Moon size={16} />} {dark ? "Light mode" : "Dark mode"}
-      </button>
       <button onClick={logout}
         onMouseEnter={() => setHoverLogout(true)} onMouseLeave={() => setHoverLogout(false)}
         style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13.5, background: hoverLogout ? hexToRgba(T.rule, 0.25) : "transparent", color: "rgba(255,255,255,.75)", transition: "background .15s" }}>
@@ -1024,7 +1042,7 @@ function Shell({ T, dark, setDark, logout, title, navItems, view, setView, child
     return (
       <div style={{ minHeight: 600 }}>
         <div className="no-print" style={{
-          position: "sticky", top: 0, zIndex: 30, background: T.ink, color: "#fff",
+          position: "sticky", top: 0, zIndex: 30, background: T.buttonFill, color: "#fff",
           display: "flex", alignItems: "center", gap: 10, padding: "12px 14px",
         }}>
           <button onClick={() => setDrawerOpen(true)} style={{ background: "transparent", border: "none", color: "#fff", cursor: "pointer", padding: 4 }}>
@@ -1038,7 +1056,7 @@ function Shell({ T, dark, setDark, logout, title, navItems, view, setView, child
           <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex" }}>
             <div onClick={() => setDrawerOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,.45)" }} />
             <div style={{
-              position: "relative", width: 240, maxWidth: "82vw", background: T.ink, color: "#fff",
+              position: "relative", width: 240, maxWidth: "82vw", background: T.buttonFill, color: "#fff",
               padding: "16px 12px", display: "flex", flexDirection: "column", gap: 4, height: "100%", overflowY: "auto",
             }}>
               <button onClick={() => setDrawerOpen(false)} style={{ alignSelf: "flex-end", background: "transparent", border: "none", color: "#fff", cursor: "pointer", marginBottom: 6 }}>
@@ -1061,7 +1079,7 @@ function Shell({ T, dark, setDark, logout, title, navItems, view, setView, child
 
   return (
     <div style={{ display: "flex", minHeight: 600 }}>
-      <div className="no-print" style={{ width: 220, background: T.ink, color: "#fff", padding: "20px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
+      <div className="no-print" style={{ width: 220, background: T.buttonFill, color: "#fff", padding: "20px 14px", display: "flex", flexDirection: "column", gap: 4 }}>
         <SidebarInner T={T} dark={dark} setDark={setDark} logout={logout} title={title} navItems={navItems} view={view} setView={setView} />
       </div>
       <div style={{
@@ -1247,7 +1265,7 @@ function CustomersPage({ T, db, saveCustomer, deleteCustomer, customerBalance })
   return (
     <div>
       <PageHeader T={T} title="Retail customers" subtitle={`${db.customers.length} total — click a name to open their statement`}
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add customer</button>} />
+        action={<button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add customer</button>} />
       <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
         <div style={{ position: "relative", flex: 1, maxWidth: 300 }}>
           <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
@@ -1332,7 +1350,7 @@ function CustomerModal({ T, initial, onClose, onSave }) {
         <Field T={T} label="Login username"><input className="lg-input" value={f.username} onChange={set("username")} /></Field>
         <Field T={T} label="Login password"><input className="lg-input" value={f.password} onChange={set("password")} /></Field>
       </div>
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
         onClick={() => f.name && f.username && onSave(f)}>Save customer</button>
     </ModalShell>
   );
@@ -1345,7 +1363,7 @@ function SalesPage({ T, db, saveSale, deleteSale, nextInvoiceNo }) {
   return (
     <div>
       <PageHeader T={T} title="Product delivery / sales entry" subtitle="Every sale updates the customer statement, due balance and dashboard automatically"
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> New sale</button>} />
+        action={<button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> New sale</button>} />
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
           <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Product</th><th>Qty</th><th>Unit price</th><th>Total</th><th></th></tr></thead>
@@ -1423,7 +1441,7 @@ function SaleModal({ T, db, initial, nextInvoiceNo, onClose, onSave }) {
           <span className="lg-mono" style={{ fontSize: 15, fontWeight: 600, color: balanceDue > 0 ? T.rule : T.green }}>{fmtMoney(balanceDue)}</span>
         </div>
       )}
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center" }}
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center" }}
         disabled={!f.customerId || !f.productName}
         onClick={() => onSave({ ...f, qty: Number(f.qty), unitPrice: Number(f.unitPrice), total, cashReceived: initial.id ? undefined : cashReceived })}>Save sale</button>
     </ModalShell>
@@ -1437,7 +1455,7 @@ function PaymentsPage({ T, db, savePayment, deletePayment }) {
   return (
     <div>
       <PageHeader T={T} title="Cash receiving" subtitle="Record any money received from a customer — downpayment, full payment, or an installment. This reduces the due balance and increases cash in hand"
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> New payment</button>} />
+        action={<button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> New payment</button>} />
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
           <thead><tr><th>Date</th><th>Customer</th><th>Amount</th><th>Method</th><th>Reference</th><th></th></tr></thead>
@@ -1494,7 +1512,7 @@ function PaymentModal({ T, db, initial, onClose, onSave }) {
       </div>
       <Field T={T} label="Reference number"><input className="lg-input" value={f.reference} onChange={set("reference")} /></Field>
       <Field T={T} label="Remarks"><input className="lg-input" value={f.remarks} onChange={set("remarks")} /></Field>
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
         disabled={!f.customerId || !f.amount}
         onClick={() => onSave({ ...f, amount: Number(f.amount) })}>Save payment</button>
     </ModalShell>
@@ -1510,7 +1528,7 @@ function ExpensesPage({ T, db, saveExpense, deleteExpense }) {
   return (
     <div>
       <PageHeader T={T} title="Expenses" subtitle="Every expense reduces cash in hand and appears in the expense report"
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> New expense</button>} />
+        action={<button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> New expense</button>} />
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
           <thead><tr><th>Date</th><th>Category</th><th>Amount</th><th>Method</th><th>Description</th><th></th></tr></thead>
@@ -1564,7 +1582,7 @@ function ExpenseModal({ T, initial, onClose, onSave }) {
       </div>
       <Field T={T} label="Description"><input className="lg-input" value={f.description} onChange={set("description")} /></Field>
       <Field T={T} label="Remarks"><input className="lg-input" value={f.remarks} onChange={set("remarks")} /></Field>
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
         disabled={!f.amount}
         onClick={() => onSave({ ...f, amount: Number(f.amount) })}>Save expense</button>
     </ModalShell>
@@ -1582,7 +1600,7 @@ function SuppliersPage({ T, db, saveSupplier, deleteSupplier, supplierBalance })
   return (
     <div>
       <PageHeader T={T} title="Suppliers" subtitle={`${db.suppliers.length} total — click a name to open their statement`}
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add supplier</button>} />
+        action={<button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add supplier</button>} />
       <div style={{ position: "relative", maxWidth: 300, marginBottom: 14 }}>
         <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
         <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search name or mobile" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -1654,7 +1672,7 @@ function SupplierModal({ T, initial, onClose, onSave }) {
       <Field T={T} label="Status">
         <select className="lg-input" value={f.status} onChange={set("status")}><option>Active</option><option>Inactive</option></select>
       </Field>
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
         onClick={() => f.name && onSave(f)}>Save supplier</button>
     </ModalShell>
   );
@@ -1667,7 +1685,7 @@ function PurchasesPage({ T, db, savePurchase, deletePurchase, nextPurchaseInvoic
   return (
     <div>
       <PageHeader T={T} title="Purchase entry" subtitle="Stock bought from a supplier — this increases accounts payable (money you owe them)"
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.suppliers.length}><Plus size={14} /> New purchase</button>} />
+        action={<button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})} disabled={!db.suppliers.length}><Plus size={14} /> New purchase</button>} />
       {!db.suppliers.length && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a supplier first before recording a purchase.</div>}
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
@@ -1732,7 +1750,7 @@ function PurchaseModal({ T, db, initial, nextPurchaseInvoiceNo, onClose, onSave 
         <span style={{ fontSize: 13, color: T.slate }}>Total amount</span>
         <span className="lg-mono" style={{ fontSize: 18, fontWeight: 600 }}>{fmtMoney(total)}</span>
       </div>
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center" }}
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center" }}
         disabled={!f.supplierId || !f.productName}
         onClick={() => onSave({ ...f, qty: Number(f.qty), unitPrice: Number(f.unitPrice), total })}>Save purchase</button>
     </ModalShell>
@@ -1746,7 +1764,7 @@ function SupplierPaymentsPage({ T, db, saveSupplierPayment, deleteSupplierPaymen
   return (
     <div>
       <PageHeader T={T} title="Payments to suppliers" subtitle="Money you pay out to a supplier — this reduces accounts payable and cash in hand"
-        action={<button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.suppliers.length}><Plus size={14} /> New payment</button>} />
+        action={<button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})} disabled={!db.suppliers.length}><Plus size={14} /> New payment</button>} />
       <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
         <table className="lg-table">
           <thead><tr><th>Date</th><th>Supplier</th><th>Amount</th><th>Method</th><th>Reference</th><th></th></tr></thead>
@@ -1803,7 +1821,7 @@ function SupplierPaymentModal({ T, db, initial, onClose, onSave }) {
       </div>
       <Field T={T} label="Reference number"><input className="lg-input" value={f.reference} onChange={set("reference")} /></Field>
       <Field T={T} label="Remarks"><input className="lg-input" value={f.remarks} onChange={set("remarks")} /></Field>
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
         disabled={!f.supplierId || !f.amount}
         onClick={() => onSave({ ...f, amount: Number(f.amount) })}>Save payment</button>
     </ModalShell>
@@ -1875,7 +1893,7 @@ function StatementModal({ T, db, kind, id, onClose }) {
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 45, padding: 16 }}>
-      <div style={{ background: T.paperCard, borderRadius: 12, padding: 22, width: "100%", maxWidth: 720, maxHeight: "90vh", overflowY: "auto" }}>
+      <div style={{ background: T.modalBg, borderRadius: 12, padding: 22, width: "100%", maxWidth: 720, maxHeight: "90vh", overflowY: "auto" }}>
         <div className="no-print" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, gap: 10, flexWrap: "wrap" }}>
           <div>
             <div className="lg-display" style={{ fontSize: 17, fontWeight: 600, color: T.ink }}>{person.name}'s statement</div>
@@ -2047,7 +2065,7 @@ function ReportsPage({ T, db, customerBalance, supplierBalance }) {
             <Card T={T} key={r.label}>
               <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{r.label}</div>
               <div style={{ fontSize: 12, color: T.slateLight, marginBottom: 12 }}>{data.length} records</div>
-              <button className="lg-btn" style={{ background: T.ink, color: "#fff" }} disabled={!data.length} onClick={() => downloadCSV(r.file, data)}>
+              <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} disabled={!data.length} onClick={() => downloadCSV(r.file, data)}>
                 <Download size={14} /> Export CSV
               </button>
             </Card>
@@ -2083,8 +2101,8 @@ function MultiPlugPage(props) {
         {MP_SUBTABS.map((t) => (
           <button key={t.key} onClick={() => setSub(t.key)} className="lg-btn"
             style={{
-              background: sub === t.key ? T.ink : "transparent", color: sub === t.key ? "#fff" : T.slate,
-              border: `1px solid ${sub === t.key ? T.ink : T.line}`, padding: "7px 14px", fontSize: 12.5,
+              background: sub === t.key ? T.buttonFill : "transparent", color: sub === t.key ? "#fff" : T.slate,
+              border: `1px solid ${sub === t.key ? T.buttonFill : T.line}`, padding: "7px 14px", fontSize: 12.5,
             }}>
             {t.label}
           </button>
@@ -2244,7 +2262,7 @@ function MpProductRenameForm({ T, product, onSave }) {
   return (
     <>
       <Field T={T} label="Product name"><input className="lg-input" value={name} onChange={(e) => setName(e.target.value)} /></Field>
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
         disabled={!name} onClick={() => onSave({ ...product, name })}>Save</button>
     </>
   );
@@ -2273,7 +2291,7 @@ function MpCustomersPage({ T, db, saveMpCustomer, deleteMpCustomer, mpCustomerBa
   return (
     <div>
       <PageHeader T={T} title="Multi Plug customers" subtitle={`${db.mpCustomers.length} total`}
-        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add customer</button></div>} />
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add customer</button></div>} />
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, maxWidth: 280 }}>
           <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
@@ -2346,7 +2364,7 @@ function MpSuppliersPage({ T, db, saveMpSupplier, deleteMpSupplier, mpSupplierBa
   return (
     <div>
       <PageHeader T={T} title="Multi Plug suppliers" subtitle={`${db.mpSuppliers.length} total`}
-        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add supplier</button></div>} />
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add supplier</button></div>} />
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, maxWidth: 280 }}>
           <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
@@ -2411,7 +2429,7 @@ function MpPersonForm({ T, initial, onSave }) {
       <Field T={T} label="Status">
         <select className="lg-input" value={f.status} onChange={set("status")}><option>Active</option><option>Inactive</option></select>
       </Field>
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
         disabled={!f.name} onClick={() => onSave(f)}>Save</button>
     </>
   );
@@ -2460,7 +2478,7 @@ function MpSalesmenPage({ T, db, saveMpSalesman, deleteMpSalesman, mpCustomerBal
   return (
     <div>
       <PageHeader T={T} title="Salesmen" subtitle="Sales, discounts given, and commission per salesman"
-        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add salesman</button></div>} />
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add salesman</button></div>} />
       <div style={{ position: "relative", maxWidth: 280, marginBottom: 14 }}>
         <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
         <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search name or mobile" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -2533,7 +2551,7 @@ function MpSalesmanModal({ T, initial, onClose, onSave }) {
       <Field T={T} label="Status">
         <select className="lg-input" value={f.status} onChange={set("status")}><option>Active</option><option>Inactive</option></select>
       </Field>
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
         disabled={!f.name || f.commissionPercent === ""} onClick={() => onSave({ ...f, commissionPercent: Number(f.commissionPercent) })}>Save salesman</button>
     </ModalShell>
   );
@@ -2569,7 +2587,7 @@ function MpPurchasePage({ T, db, saveMpPurchase, deleteMpPurchase, saveMpProduct
   return (
     <div>
       <PageHeader T={T} title="Purchase entry" subtitle="Buying stock from a supplier at DP (Dealer Price) — this adds to stock"
-        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpSuppliers.length}><Plus size={14} /> New purchase</button></div>} />
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpSuppliers.length}><Plus size={14} /> New purchase</button></div>} />
       {!db.mpSuppliers.length && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a Multi Plug supplier first (Suppliers tab).</div>}
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
@@ -2655,8 +2673,8 @@ function MpPurchaseModal({ T, db, nextMpPurchaseInvoiceNo, onClose, onSave }) {
       </div>
       <Field T={T} label="Product">
         <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-          <button type="button" className="lg-btn" onClick={() => setProductMode("existing")} style={{ background: productMode === "existing" ? T.ink : "transparent", color: productMode === "existing" ? "#fff" : T.slate, border: `1px solid ${T.line}`, fontSize: 12 }}>Existing product</button>
-          <button type="button" className="lg-btn" onClick={() => setProductMode("new")} style={{ background: productMode === "new" ? T.ink : "transparent", color: productMode === "new" ? "#fff" : T.slate, border: `1px solid ${T.line}`, fontSize: 12 }}>New product</button>
+          <button type="button" className="lg-btn" onClick={() => setProductMode("existing")} style={{ background: productMode === "existing" ? T.buttonFill : "transparent", color: productMode === "existing" ? "#fff" : T.slate, border: `1px solid ${T.line}`, fontSize: 12 }}>Existing product</button>
+          <button type="button" className="lg-btn" onClick={() => setProductMode("new")} style={{ background: productMode === "new" ? T.buttonFill : "transparent", color: productMode === "new" ? "#fff" : T.slate, border: `1px solid ${T.line}`, fontSize: 12 }}>New product</button>
         </div>
         {productMode === "existing" ? (
           <select className="lg-input" value={f.productId} onChange={set("productId")}>
@@ -2675,7 +2693,7 @@ function MpPurchaseModal({ T, db, nextMpPurchaseInvoiceNo, onClose, onSave }) {
         <span style={{ fontSize: 13, color: T.slate }}>Total (added to payable)</span>
         <span className="lg-mono" style={{ fontSize: 18, fontWeight: 600 }}>{fmtMoney(total)}</span>
       </div>
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center" }}
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center" }}
         disabled={!f.supplierId || (productMode === "existing" ? !f.productId : !f.newProductName)}
         onClick={save}>Save purchase</button>
     </ModalShell>
@@ -2753,7 +2771,7 @@ function MpSalesPage({ T, db, deleteMpInvoice, saveMpInvoice, mpStockReport, nex
   return (
     <div>
       <PageHeader T={T} title="Sales entry" subtitle="One invoice per customer — add several products, take cash payment, and download a PDF"
-        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpCustomers.length || !db.mpProducts.length}><Plus size={14} /> New invoice</button></div>} />
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpCustomers.length || !db.mpProducts.length}><Plus size={14} /> New invoice</button></div>} />
       {(!db.mpCustomers.length || !db.mpProducts.length) && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a customer and at least one product (via Purchase entry) first.</div>}
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
@@ -2926,7 +2944,7 @@ function MpInvoiceModal({ T, db, mpStockReport, nextMpSaleInvoiceNo, onClose, on
         <span className="lg-mono" style={{ fontSize: 15, fontWeight: 600, color: balanceDue > 0 ? T.rule : T.green }}>{fmtMoney(balanceDue)}</span>
       </div>
 
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center" }}
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center" }}
         disabled={!customerId || !salesmanId || !items.length}
         onClick={() => onSave({ date, customerId, salesmanId, items, cashReceived: cash, editingInvoiceNo: isEditing ? initialInvoice.invoiceNo : undefined })}>
         {isEditing ? "Update invoice" : "Save invoice"}
@@ -3017,7 +3035,7 @@ function MpInvoicePreviewModal({ T, db, invoice, onClose }) {
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4, color: T.green }}><span>Cash received</span><span className="lg-mono" style={{ fontWeight: 600 }}>{fmtMoney(invoice.cashReceived)}</span></div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, fontWeight: 700, color: invoice.balanceDue > 0 ? T.rule : T.green }}><span>Balance due</span><span className="lg-mono">{fmtMoney(invoice.balanceDue)}</span></div>
       </div>
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center" }} onClick={downloadPDF}>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center" }} onClick={downloadPDF}>
         <Download size={14} /> Download PDF
       </button>
     </ModalShell>
@@ -3053,7 +3071,7 @@ function MpPaymentsPage({ T, db, saveMpPayment, deleteMpPayment }) {
   return (
     <div>
       <PageHeader T={T} title="Cash receiving" subtitle="Money received from a Multi Plug customer"
-        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpCustomers.length}><Plus size={14} /> New payment</button></div>} />
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpCustomers.length}><Plus size={14} /> New payment</button></div>} />
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
           <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
@@ -3122,7 +3140,7 @@ function MpPaymentForm({ T, db, onSave }) {
         </Field>
       </div>
       <Field T={T} label="Reference"><input className="lg-input" value={f.reference} onChange={set("reference")} /></Field>
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
         disabled={!f.customerId || !f.amount} onClick={() => onSave({ ...f, amount: Number(f.amount) })}>Save payment</button>
     </>
   );
@@ -3157,7 +3175,7 @@ function MpSupplierPaymentsPage({ T, db, saveMpSupplierPayment, deleteMpSupplier
   return (
     <div>
       <PageHeader T={T} title="Payments to suppliers" subtitle="Money paid out to a Multi Plug supplier"
-        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.ink, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpSuppliers.length}><Plus size={14} /> New payment</button></div>} />
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})} disabled={!db.mpSuppliers.length}><Plus size={14} /> New payment</button></div>} />
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
           <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
@@ -3226,7 +3244,7 @@ function MpSupplierPaymentForm({ T, db, onSave }) {
         </Field>
       </div>
       <Field T={T} label="Reference"><input className="lg-input" value={f.reference} onChange={set("reference")} /></Field>
-      <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
         disabled={!f.supplierId || !f.amount} onClick={() => onSave({ ...f, amount: Number(f.amount) })}>Save payment</button>
     </>
   );
@@ -3264,7 +3282,7 @@ function MpSettingsPage({ T, db, saveMpSettings }) {
         <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 12, marginTop: notSetYet ? 0 : -6 }}>
           এই % দিয়ে Stock Report আর Sales entry-তে TP (বিক্রয়মূল্য) অটোমেটিক suggest হয় (DP + এই %) — এটা শুধু একটা suggestion, প্রতিটা বিক্রির সময় চাইলে TP নিজে বদলে দিতে পারবে।
         </div>
-        <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
           disabled={marginPercent === ""} onClick={() => saveMpSettings({ openingCash: Number(openingCash), marginPercent: Number(marginPercent) })}>Save</button>
       </Card>
       <div style={{ fontSize: 12, color: T.slateLight, marginTop: 14, maxWidth: 420 }}>
@@ -3285,7 +3303,7 @@ function SettingsPage({ T, db, saveSettings }) {
         <Field T={T} label="Opening cash balance"><input className="lg-input" type="number" value={openingCash} onChange={(e) => setOpeningCash(e.target.value)} /></Field>
         <Field T={T} label="Currency"><input className="lg-input" value="BDT (Bangladeshi Taka)" disabled /></Field>
         <Field T={T} label="Date format"><input className="lg-input" value="DD-MM-YYYY" disabled /></Field>
-        <button className="lg-btn" style={{ background: T.ink, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
           onClick={() => saveSettings({ companyName, openingCash: Number(openingCash) })}>Save settings</button>
       </Card>
       <div style={{ fontSize: 12, color: T.slateLight, marginTop: 14, maxWidth: 420 }}>
@@ -3450,7 +3468,7 @@ function CustomerPayments({ T, db, customerId }) {
 function ModalShell({ T, title, onClose, children }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 40, padding: 16 }}>
-      <div style={{ background: T.paperCard, borderRadius: 12, padding: 22, width: "100%", maxWidth: 440, maxHeight: "88vh", overflowY: "auto" }}>
+      <div style={{ background: T.modalBg, borderRadius: 12, padding: 22, width: "100%", maxWidth: 440, maxHeight: "88vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <div className="lg-display" style={{ fontSize: 17, fontWeight: 600, color: T.ink }}>{title}</div>
           <button onClick={onClose} style={{ background: "transparent", border: "none", cursor: "pointer", color: T.slate }}><X size={18} /></button>
