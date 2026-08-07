@@ -64,8 +64,8 @@ const PHOTO = {
   rule: "#FF8A75",
   green: "#7EE6B8",
   gold: "#FFD87A",
-  slate: "#E7E7E7",
-  slateLight: "#C2C2C2",
+  slate: "#F5F5F5",
+  slateLight: "#E2E2E2",
   line: "rgba(255,255,255,0.28)",
   dangerBg: "rgba(255,90,90,0.16)",
   greenBg: "rgba(120,230,180,0.14)",
@@ -839,7 +839,10 @@ export default function App() {
       backgroundPosition: "center",
       backgroundAttachment: "fixed",
       backgroundRepeat: "no-repeat",
-      minHeight: "100vh", color: T.ink, transition: "background .2s", overflowX: "hidden",
+      minHeight: "100vh",
+      color: role ? PHOTO.ink : T.ink,
+      textShadow: role ? "0 1px 3px rgba(0,0,0,.75)" : "none",
+      transition: "background .2s", overflowX: "hidden",
     }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
