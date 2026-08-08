@@ -2921,7 +2921,7 @@ function MpInvoiceModal({ T, db, mpStockReport, nextMpSaleInvoiceNo, onClose, on
             <tbody>
               {items.map((it) => (
                 <tr key={it.key}>
-                  <td>{it.productName}</td>
+                  <td style={{ color: T.ink }}>{it.productName || db.mpProducts.find((p) => p.id === it.productId)?.name || "—"}</td>
                   <td className="lg-mono" style={{ textAlign: "right" }}>{it.qty}</td>
                   <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(it.tp)}</td>
                   <td className="lg-mono" style={{ textAlign: "right", color: T.rule }}>{fmtMoney(it.discount)}</td>
@@ -3025,7 +3025,7 @@ function MpInvoicePreviewModal({ T, db, invoice, onClose }) {
         <tbody>
           {invoice.items.map((it) => (
             <tr key={it.id}>
-              <td>{it.productName}</td>
+              <td style={{ color: T.ink }}>{it.productName || "—"}</td>
               <td className="lg-mono" style={{ textAlign: "right" }}>{it.qty}</td>
               <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(it.tp)}</td>
               <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(it.total)}</td>
