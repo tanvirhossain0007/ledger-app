@@ -11,12 +11,20 @@ import {
 const CUR = "BDT";
 const TABLE_KEYS = ["customers", "sales", "payments", "expenses", "suppliers", "purchases", "supplierPayments"];
 const MP_TABLE_KEYS = ["mpCustomers", "mpSuppliers", "mpSalesmen", "mpProducts", "mpPurchases", "mpSales", "mpPayments", "mpSupplierPayments"];
-const ALL_TABLE_KEYS = [...TABLE_KEYS, ...MP_TABLE_KEYS];
-// Maps a JS state key to its real Supabase table name (Multi Plug tables use an mp_ prefix in the DB).
+const CTG_TABLE_KEYS = ["ctgCustomers", "ctgSuppliers", "ctgSalesmen", "ctgProducts", "ctgPurchases", "ctgSales", "ctgPayments", "ctgSupplierPayments"];
+const INF_TABLE_KEYS = ["infCustomers", "infSuppliers", "infSalesmen", "infProducts", "infPurchases", "infSales", "infPayments", "infSupplierPayments"];
+const ALL_TABLE_KEYS = [...TABLE_KEYS, ...MP_TABLE_KEYS, ...CTG_TABLE_KEYS, ...INF_TABLE_KEYS];
+// Maps a JS state key to its real Supabase table name (Multi Plug / CTG / INFINITY tables use an mp_/ctg_/inf_ prefix in the DB).
 const TABLE_NAME = {
   mpCustomers: "mp_customers", mpSuppliers: "mp_suppliers", mpSalesmen: "mp_salesmen",
   mpProducts: "mp_products", mpPurchases: "mp_purchases", mpSales: "mp_sales",
   mpPayments: "mp_payments", mpSupplierPayments: "mp_supplier_payments",
+  ctgCustomers: "ctg_customers", ctgSuppliers: "ctg_suppliers", ctgSalesmen: "ctg_salesmen",
+  ctgProducts: "ctg_products", ctgPurchases: "ctg_purchases", ctgSales: "ctg_sales",
+  ctgPayments: "ctg_payments", ctgSupplierPayments: "ctg_supplier_payments",
+  infCustomers: "inf_customers", infSuppliers: "inf_suppliers", infSalesmen: "inf_salesmen",
+  infProducts: "inf_products", infPurchases: "inf_purchases", infSales: "inf_sales",
+  infPayments: "inf_payments", infSupplierPayments: "inf_supplier_payments",
 };
 const tableNameFor = (key) => TABLE_NAME[key] || key;
 
@@ -155,6 +163,24 @@ const emptyDB = () => ({
   mpPayments: [],
   mpSupplierPayments: [],
   mpSettings: { openingCash: 0, purchaseInvoiceSeq: 1, saleInvoiceSeq: 1, marginPercent: null },
+  ctgCustomers: [],
+  ctgSuppliers: [],
+  ctgSalesmen: [],
+  ctgProducts: [],
+  ctgPurchases: [],
+  ctgSales: [],
+  ctgPayments: [],
+  ctgSupplierPayments: [],
+  ctgSettings: { openingCash: 0, purchaseInvoiceSeq: 1, saleInvoiceSeq: 1, marginPercent: null },
+  infCustomers: [],
+  infSuppliers: [],
+  infSalesmen: [],
+  infProducts: [],
+  infPurchases: [],
+  infSales: [],
+  infPayments: [],
+  infSupplierPayments: [],
+  infSettings: { openingCash: 0, purchaseInvoiceSeq: 1, saleInvoiceSeq: 1, marginPercent: null },
 });
 
 async function fetchAllTables() {
@@ -173,15 +199,25 @@ async function fetchAllTables() {
     const { id, ...rest } = mpSettingsRes.data;
     next.mpSettings = { ...next.mpSettings, ...rest };
   }
+  const ctgSettingsRes = await supabase.from("ctg_settings").select("*").eq("id", 1).single();
+  if (ctgSettingsRes.data) {
+    const { id, ...rest } = ctgSettingsRes.data;
+    next.ctgSettings = { ...next.ctgSettings, ...rest };
+  }
+  const infSettingsRes = await supabase.from("inf_settings").select("*").eq("id", 1).single();
+  if (infSettingsRes.data) {
+    const { id, ...rest } = infSettingsRes.data;
+    next.infSettings = { ...next.infSettings, ...rest };
+  }
   return next;
 }
 
 // Diffs prev vs next for each table and only pushes what actually changed to Supabase,
 // instead of re-uploading the entire database on every save.
 // Tables other rows point to via a foreign key (must be synced first).
-const PARENT_TABLE_KEYS = ["customers", "suppliers", "expenses", "mpCustomers", "mpSuppliers", "mpSalesmen", "mpProducts"];
+const PARENT_TABLE_KEYS = ["customers", "suppliers", "expenses", "mpCustomers", "mpSuppliers", "mpSalesmen", "mpProducts", "ctgCustomers", "ctgSuppliers", "ctgSalesmen", "ctgProducts", "infCustomers", "infSuppliers", "infSalesmen", "infProducts"];
 // Tables that reference a parent row above (must be synced after their parent exists).
-const CHILD_TABLE_KEYS = ["sales", "payments", "purchases", "supplierPayments", "mpPurchases", "mpSales", "mpPayments", "mpSupplierPayments"];
+const CHILD_TABLE_KEYS = ["sales", "payments", "purchases", "supplierPayments", "mpPurchases", "mpSales", "mpPayments", "mpSupplierPayments", "ctgPurchases", "ctgSales", "ctgPayments", "ctgSupplierPayments", "infPurchases", "infSales", "infPayments", "infSupplierPayments"];
 
 async function syncToSupabase(prev, next) {
   const buildJobs = (keys) => {
@@ -210,6 +246,12 @@ async function syncToSupabase(prev, next) {
   }
   if (prev.mpSettings !== next.mpSettings) {
     parentJobs.push(supabase.from("mp_settings").upsert({ id: 1, ...next.mpSettings }));
+  }
+  if (prev.ctgSettings !== next.ctgSettings) {
+    parentJobs.push(supabase.from("ctg_settings").upsert({ id: 1, ...next.ctgSettings }));
+  }
+  if (prev.infSettings !== next.infSettings) {
+    parentJobs.push(supabase.from("inf_settings").upsert({ id: 1, ...next.infSettings }));
   }
   const parentResults = await Promise.all(parentJobs);
   const parentFailed = parentResults.find((r) => r && r.error);
@@ -478,6 +520,146 @@ export default function App() {
       totalOutstanding, cashInHand, totalStockDPValue, totalStockTPValue, totalCommission,
     };
   }, [db, mpSupplierBalance, mpCustomerBalance, mpStockReport]);
+
+  const infCustomerBalance = useCallback(
+    (custId) => {
+      const cust = db.infCustomers.find((c) => c.id === custId);
+      if (!cust) return 0;
+      const sold = db.infSales.filter((s) => s.customerId === custId).reduce((a, s) => a + Number(s.total), 0);
+      const paid = db.infPayments.filter((p) => p.customerId === custId).reduce((a, p) => a + Number(p.amount), 0);
+      return Number(cust.openingBalance || 0) + sold - paid;
+    },
+    [db]
+  );
+
+  const infSupplierBalance = useCallback(
+    (supId) => {
+      const sup = db.infSuppliers.find((s) => s.id === supId);
+      if (!sup) return 0;
+      const bought = db.infPurchases.filter((p) => p.supplierId === supId).reduce((a, p) => a + Number(p.qty) * Number(p.dp), 0);
+      const paid = db.infSupplierPayments.filter((p) => p.supplierId === supId).reduce((a, p) => a + Number(p.amount), 0);
+      return Number(sup.openingBalance || 0) + bought - paid;
+    },
+    [db]
+  );
+
+  // One row per product: total bought/sold, remaining stock, weighted-average DP,
+  // auto TP (DP + your chosen margin %, set in INFINITY Settings), and total DP/TP value in stock.
+  const infStockReport = useMemo(() => {
+    const marginPercent = Number(db.infSettings.marginPercent ?? 0); // 0 until you set it in Settings — no silent default
+    return db.infProducts.map((prod) => {
+      const purchases = db.infPurchases.filter((p) => p.productId === prod.id);
+      const sales = db.infSales.filter((s) => s.productId === prod.id);
+      const totalPurchasedQty = purchases.reduce((a, p) => a + Number(p.qty), 0);
+      const totalSoldQty = sales.reduce((a, s) => a + Number(s.qty), 0);
+      const remainingQty = totalPurchasedQty - totalSoldQty;
+      const totalPurchaseValue = purchases.reduce((a, p) => a + Number(p.qty) * Number(p.dp), 0);
+      const avgDP = totalPurchasedQty > 0 ? totalPurchaseValue / totalPurchasedQty : 0;
+      const autoTP = avgDP * (1 + marginPercent / 100);
+      const suppliers = Array.from(new Set(purchases.map((p) => {
+        const sup = db.infSuppliers.find((s) => s.id === p.supplierId);
+        return sup ? sup.name : null;
+      }).filter(Boolean)));
+      return {
+        productId: prod.id, productName: prod.name, suppliers,
+        totalPurchasedQty, totalSoldQty, remainingQty,
+        avgDP, autoTP,
+        totalDPValue: remainingQty * avgDP,
+        totalTPValue: remainingQty * autoTP,
+      };
+    });
+  }, [db]);
+
+  const infTotals = useMemo(() => {
+    const totalSales = db.infSales.reduce((a, s) => a + Number(s.total), 0);
+    const totalCollections = db.infPayments.reduce((a, p) => a + Number(p.amount), 0);
+    const totalPurchaseValue = db.infPurchases.reduce((a, p) => a + Number(p.qty) * Number(p.dp), 0);
+    const totalSupplierPayments = db.infSupplierPayments.reduce((a, p) => a + Number(p.amount), 0);
+    const totalPayable = db.infSuppliers.reduce((a, s) => a + infSupplierBalance(s.id), 0);
+    const totalOutstanding = db.infCustomers.reduce((a, c) => a + infCustomerBalance(c.id), 0);
+    const cashInHand = Number(db.infSettings.openingCash || 0) + totalCollections - totalSupplierPayments;
+    const totalStockDPValue = infStockReport.reduce((a, r) => a + r.totalDPValue, 0);
+    const totalStockTPValue = infStockReport.reduce((a, r) => a + r.totalTPValue, 0);
+    const totalCommission = db.infSales.reduce((a, s) => {
+      const sm = db.infSalesmen.find((x) => x.id === s.salesmanId);
+      const pct = sm ? Number(sm.commissionPercent || 0) : 0; // 0 until a commission % is set for this salesman
+      return a + Number(s.total) * (pct / 100);
+    }, 0);
+    return {
+      totalSales, totalCollections, totalPurchaseValue, totalSupplierPayments, totalPayable,
+      totalOutstanding, cashInHand, totalStockDPValue, totalStockTPValue, totalCommission,
+    };
+  }, [db, infSupplierBalance, infCustomerBalance, infStockReport]);
+
+  const ctgCustomerBalance = useCallback(
+    (custId) => {
+      const cust = db.ctgCustomers.find((c) => c.id === custId);
+      if (!cust) return 0;
+      const sold = db.ctgSales.filter((s) => s.customerId === custId).reduce((a, s) => a + Number(s.total), 0);
+      const paid = db.ctgPayments.filter((p) => p.customerId === custId).reduce((a, p) => a + Number(p.amount), 0);
+      return Number(cust.openingBalance || 0) + sold - paid;
+    },
+    [db]
+  );
+
+  const ctgSupplierBalance = useCallback(
+    (supId) => {
+      const sup = db.ctgSuppliers.find((s) => s.id === supId);
+      if (!sup) return 0;
+      const bought = db.ctgPurchases.filter((p) => p.supplierId === supId).reduce((a, p) => a + Number(p.qty) * Number(p.dp), 0);
+      const paid = db.ctgSupplierPayments.filter((p) => p.supplierId === supId).reduce((a, p) => a + Number(p.amount), 0);
+      return Number(sup.openingBalance || 0) + bought - paid;
+    },
+    [db]
+  );
+
+  // One row per product: total bought/sold, remaining stock, weighted-average DP,
+  // auto TP (DP + your chosen margin %, set in CTG Settings), and total DP/TP value in stock.
+  const ctgStockReport = useMemo(() => {
+    const marginPercent = Number(db.ctgSettings.marginPercent ?? 0); // 0 until you set it in Settings — no silent default
+    return db.ctgProducts.map((prod) => {
+      const purchases = db.ctgPurchases.filter((p) => p.productId === prod.id);
+      const sales = db.ctgSales.filter((s) => s.productId === prod.id);
+      const totalPurchasedQty = purchases.reduce((a, p) => a + Number(p.qty), 0);
+      const totalSoldQty = sales.reduce((a, s) => a + Number(s.qty), 0);
+      const remainingQty = totalPurchasedQty - totalSoldQty;
+      const totalPurchaseValue = purchases.reduce((a, p) => a + Number(p.qty) * Number(p.dp), 0);
+      const avgDP = totalPurchasedQty > 0 ? totalPurchaseValue / totalPurchasedQty : 0;
+      const autoTP = avgDP * (1 + marginPercent / 100);
+      const suppliers = Array.from(new Set(purchases.map((p) => {
+        const sup = db.ctgSuppliers.find((s) => s.id === p.supplierId);
+        return sup ? sup.name : null;
+      }).filter(Boolean)));
+      return {
+        productId: prod.id, productName: prod.name, suppliers,
+        totalPurchasedQty, totalSoldQty, remainingQty,
+        avgDP, autoTP,
+        totalDPValue: remainingQty * avgDP,
+        totalTPValue: remainingQty * autoTP,
+      };
+    });
+  }, [db]);
+
+  const ctgTotals = useMemo(() => {
+    const totalSales = db.ctgSales.reduce((a, s) => a + Number(s.total), 0);
+    const totalCollections = db.ctgPayments.reduce((a, p) => a + Number(p.amount), 0);
+    const totalPurchaseValue = db.ctgPurchases.reduce((a, p) => a + Number(p.qty) * Number(p.dp), 0);
+    const totalSupplierPayments = db.ctgSupplierPayments.reduce((a, p) => a + Number(p.amount), 0);
+    const totalPayable = db.ctgSuppliers.reduce((a, s) => a + ctgSupplierBalance(s.id), 0);
+    const totalOutstanding = db.ctgCustomers.reduce((a, c) => a + ctgCustomerBalance(c.id), 0);
+    const cashInHand = Number(db.ctgSettings.openingCash || 0) + totalCollections - totalSupplierPayments;
+    const totalStockDPValue = ctgStockReport.reduce((a, r) => a + r.totalDPValue, 0);
+    const totalStockTPValue = ctgStockReport.reduce((a, r) => a + r.totalTPValue, 0);
+    const totalCommission = db.ctgSales.reduce((a, s) => {
+      const sm = db.ctgSalesmen.find((x) => x.id === s.salesmanId);
+      const pct = sm ? Number(sm.commissionPercent || 0) : 0; // 0 until a commission % is set for this salesman
+      return a + Number(s.total) * (pct / 100);
+    }, 0);
+    return {
+      totalSales, totalCollections, totalPurchaseValue, totalSupplierPayments, totalPayable,
+      totalOutstanding, cashInHand, totalStockDPValue, totalStockTPValue, totalCommission,
+    };
+  }, [db, ctgSupplierBalance, ctgCustomerBalance, ctgStockReport]);
 
   const monthlyChartData = useMemo(() => {
     const map = {};
@@ -782,6 +964,244 @@ export default function App() {
     notify("Multi Plug settings saved");
   };
 
+  // ---------- INFINITY module ----------
+  // Generic helper: saves/updates a row in any mp_* collection by id.
+  const infSave = (key, prefix, data, msg) => {
+    updateDb((prev) => {
+      const list = prev[key];
+      const exists = list.some((r) => r.id === data.id);
+      const next = exists ? list.map((r) => (r.id === data.id ? data : r)) : [...list, { ...data, id: uid(prefix) }];
+      return { ...prev, [key]: next };
+    });
+    notify(msg);
+  };
+  const infDelete = (key, id, msg) => {
+    updateDb((prev) => ({ ...prev, [key]: prev[key].filter((r) => r.id !== id) }));
+    notify(msg, "danger");
+  };
+
+  const saveInfCustomer = (data) => infSave("infCustomers", "INFCUS", data, "INFINITY customer saved");
+  const deleteInfCustomer = (id) => infDelete("infCustomers", id, "Customer deleted");
+
+  const saveInfSupplier = (data) => infSave("infSuppliers", "INFSUP", data, "INFINITY supplier saved");
+  const deleteInfSupplier = (id) => infDelete("infSuppliers", id, "Supplier deleted");
+
+  const saveInfSalesman = (data) => infSave("infSalesmen", "INFSM", data, "Salesman saved");
+  const deleteInfSalesman = (id) => infDelete("infSalesmen", id, "Salesman deleted");
+
+  const saveInfProduct = (data) => infSave("infProducts", "INFPRD", data, "Product saved");
+  const deleteInfProduct = (id) => infDelete("infProducts", id, "Product deleted");
+
+  const nextInfPurchaseInvoiceNo = () => `INFP-${String(db.infSettings.purchaseInvoiceSeq).padStart(4, "0")}`;
+  const nextInfSaleInvoiceNo = () => `INFS-${String(db.infSettings.saleInvoiceSeq).padStart(4, "0")}`;
+
+  const saveInfPurchase = (data, newProduct) => {
+    updateDb((prev) => {
+      const exists = prev.infPurchases.some((p) => p.id === data.id);
+      let infPurchases, infSettings = prev.infSettings;
+      const infProducts = newProduct ? [...prev.infProducts, newProduct] : prev.infProducts;
+      if (exists) {
+        infPurchases = prev.infPurchases.map((p) => (p.id === data.id ? data : p));
+      } else {
+        const invoiceNo = nextInfPurchaseInvoiceNo();
+        infPurchases = [...prev.infPurchases, { ...data, id: uid("INFPUR"), invoiceNo }];
+        infSettings = { ...prev.infSettings, purchaseInvoiceSeq: prev.infSettings.purchaseInvoiceSeq + 1 };
+      }
+      return { ...prev, infPurchases, infProducts, infSettings };
+    });
+    notify("Purchase recorded — stock updated");
+  };
+  const deleteInfPurchase = (id) => infDelete("infPurchases", id, "Purchase entry removed");
+
+  const saveInfSale = (data) => {
+    updateDb((prev) => {
+      const exists = prev.infSales.some((s) => s.id === data.id);
+      let infSales, infSettings = prev.infSettings;
+      if (exists) {
+        infSales = prev.infSales.map((s) => (s.id === data.id ? data : s));
+      } else {
+        const invoiceNo = nextInfSaleInvoiceNo();
+        infSales = [...prev.infSales, { ...data, id: uid("INFSAL"), invoiceNo }];
+        infSettings = { ...prev.infSettings, saleInvoiceSeq: prev.infSettings.saleInvoiceSeq + 1 };
+      }
+      return { ...prev, infSales, infSettings };
+    });
+    notify("Sale recorded — stock and salesman commission updated");
+  };
+  const deleteInfSale = (id) => infDelete("infSales", id, "Sale entry removed");
+
+  // One invoice, many product line items, plus an optional "cash received now" payment —
+  // all saved in a single state update so nothing can race/fail out of order.
+  const saveInfInvoice = ({ date, customerId, salesmanId, items, cashReceived, editingInvoiceNo }) => {
+    const invoiceNo = editingInvoiceNo || nextInfSaleInvoiceNo();
+    const saleRows = items.map((it) => ({
+      id: uid("INFSAL"), invoiceNo, date, customerId, salesmanId,
+      productId: it.productId, productName: it.productName, qty: it.qty, tp: it.tp,
+      discount: it.discount || 0, total: Math.max(it.qty * it.tp - (it.discount || 0), 0),
+    }));
+    const grandTotal = saleRows.reduce((a, r) => a + r.total, 0);
+    const cash = Number(cashReceived) || 0;
+    let paymentRow = null;
+    if (cash > 0) {
+      paymentRow = { id: uid("INFPAY"), date, customerId, amount: Math.min(cash, grandTotal), method: "Cash", reference: invoiceNo, remarks: "Cash received at sale" };
+    }
+    updateDb((prev) => {
+      // Editing: drop this invoice's old line items and its old cash-at-sale payment (if any) before adding the new ones.
+      const infSales = editingInvoiceNo
+        ? [...prev.infSales.filter((s) => s.invoiceNo !== editingInvoiceNo), ...saleRows]
+        : [...prev.infSales, ...saleRows];
+      const infPaymentsWithoutOld = editingInvoiceNo
+        ? prev.infPayments.filter((p) => !(p.reference === editingInvoiceNo && p.remarks === "Cash received at sale"))
+        : prev.infPayments;
+      const infPayments = paymentRow ? [...infPaymentsWithoutOld, paymentRow] : infPaymentsWithoutOld;
+      return {
+        ...prev, infSales, infPayments,
+        infSettings: editingInvoiceNo ? prev.infSettings : { ...prev.infSettings, saleInvoiceSeq: prev.infSettings.saleInvoiceSeq + 1 },
+      };
+    });
+    notify(editingInvoiceNo ? "Invoice updated" : "Invoice saved — stock, due balance and commission updated");
+    return { invoiceNo, date, customerId, salesmanId, items: saleRows, grandTotal, cashReceived: cash, balanceDue: Math.max(grandTotal - cash, 0) };
+  };
+
+  const deleteInfInvoice = (invoiceNo) => {
+    updateDb((prev) => ({
+      ...prev,
+      infSales: prev.infSales.filter((s) => s.invoiceNo !== invoiceNo),
+      infPayments: prev.infPayments.filter((p) => !(p.reference === invoiceNo && p.remarks === "Cash received at sale")),
+    }));
+    notify("Invoice deleted", "danger");
+  };
+
+  const saveInfPayment = (data) => infSave("infPayments", "INFPAY", data, "Payment recorded");
+  const deleteInfPayment = (id) => infDelete("infPayments", id, "Payment removed");
+
+  const saveInfSupplierPayment = (data) => infSave("infSupplierPayments", "INFSPAY", data, "Payment to supplier recorded");
+  const deleteInfSupplierPayment = (id) => infDelete("infSupplierPayments", id, "Supplier payment removed");
+
+  const saveInfSettings = (data) => {
+    updateDb((prev) => ({ ...prev, infSettings: { ...prev.infSettings, ...data } }));
+    notify("INFINITY settings saved");
+  };
+
+  // ---------- CTG module ----------
+  // Generic helper: saves/updates a row in any mp_* collection by id.
+  const ctgSave = (key, prefix, data, msg) => {
+    updateDb((prev) => {
+      const list = prev[key];
+      const exists = list.some((r) => r.id === data.id);
+      const next = exists ? list.map((r) => (r.id === data.id ? data : r)) : [...list, { ...data, id: uid(prefix) }];
+      return { ...prev, [key]: next };
+    });
+    notify(msg);
+  };
+  const ctgDelete = (key, id, msg) => {
+    updateDb((prev) => ({ ...prev, [key]: prev[key].filter((r) => r.id !== id) }));
+    notify(msg, "danger");
+  };
+
+  const saveCtgCustomer = (data) => ctgSave("ctgCustomers", "CTGCUS", data, "CTG customer saved");
+  const deleteCtgCustomer = (id) => ctgDelete("ctgCustomers", id, "Customer deleted");
+
+  const saveCtgSupplier = (data) => ctgSave("ctgSuppliers", "CTGSUP", data, "CTG supplier saved");
+  const deleteCtgSupplier = (id) => ctgDelete("ctgSuppliers", id, "Supplier deleted");
+
+  const saveCtgSalesman = (data) => ctgSave("ctgSalesmen", "CTGSM", data, "Salesman saved");
+  const deleteCtgSalesman = (id) => ctgDelete("ctgSalesmen", id, "Salesman deleted");
+
+  const saveCtgProduct = (data) => ctgSave("ctgProducts", "CTGPRD", data, "Product saved");
+  const deleteCtgProduct = (id) => ctgDelete("ctgProducts", id, "Product deleted");
+
+  const nextCtgPurchaseInvoiceNo = () => `CTGP-${String(db.ctgSettings.purchaseInvoiceSeq).padStart(4, "0")}`;
+  const nextCtgSaleInvoiceNo = () => `CTGS-${String(db.ctgSettings.saleInvoiceSeq).padStart(4, "0")}`;
+
+  const saveCtgPurchase = (data, newProduct) => {
+    updateDb((prev) => {
+      const exists = prev.ctgPurchases.some((p) => p.id === data.id);
+      let ctgPurchases, ctgSettings = prev.ctgSettings;
+      const ctgProducts = newProduct ? [...prev.ctgProducts, newProduct] : prev.ctgProducts;
+      if (exists) {
+        ctgPurchases = prev.ctgPurchases.map((p) => (p.id === data.id ? data : p));
+      } else {
+        const invoiceNo = nextCtgPurchaseInvoiceNo();
+        ctgPurchases = [...prev.ctgPurchases, { ...data, id: uid("CTGPUR"), invoiceNo }];
+        ctgSettings = { ...prev.ctgSettings, purchaseInvoiceSeq: prev.ctgSettings.purchaseInvoiceSeq + 1 };
+      }
+      return { ...prev, ctgPurchases, ctgProducts, ctgSettings };
+    });
+    notify("Purchase recorded — stock updated");
+  };
+  const deleteCtgPurchase = (id) => ctgDelete("ctgPurchases", id, "Purchase entry removed");
+
+  const saveCtgSale = (data) => {
+    updateDb((prev) => {
+      const exists = prev.ctgSales.some((s) => s.id === data.id);
+      let ctgSales, ctgSettings = prev.ctgSettings;
+      if (exists) {
+        ctgSales = prev.ctgSales.map((s) => (s.id === data.id ? data : s));
+      } else {
+        const invoiceNo = nextCtgSaleInvoiceNo();
+        ctgSales = [...prev.ctgSales, { ...data, id: uid("CTGSAL"), invoiceNo }];
+        ctgSettings = { ...prev.ctgSettings, saleInvoiceSeq: prev.ctgSettings.saleInvoiceSeq + 1 };
+      }
+      return { ...prev, ctgSales, ctgSettings };
+    });
+    notify("Sale recorded — stock and salesman commission updated");
+  };
+  const deleteCtgSale = (id) => ctgDelete("ctgSales", id, "Sale entry removed");
+
+  // One invoice, many product line items, plus an optional "cash received now" payment —
+  // all saved in a single state update so nothing can race/fail out of order.
+  const saveCtgInvoice = ({ date, customerId, salesmanId, items, cashReceived, editingInvoiceNo }) => {
+    const invoiceNo = editingInvoiceNo || nextCtgSaleInvoiceNo();
+    const saleRows = items.map((it) => ({
+      id: uid("CTGSAL"), invoiceNo, date, customerId, salesmanId,
+      productId: it.productId, productName: it.productName, qty: it.qty, tp: it.tp,
+      discount: it.discount || 0, total: Math.max(it.qty * it.tp - (it.discount || 0), 0),
+    }));
+    const grandTotal = saleRows.reduce((a, r) => a + r.total, 0);
+    const cash = Number(cashReceived) || 0;
+    let paymentRow = null;
+    if (cash > 0) {
+      paymentRow = { id: uid("CTGPAY"), date, customerId, amount: Math.min(cash, grandTotal), method: "Cash", reference: invoiceNo, remarks: "Cash received at sale" };
+    }
+    updateDb((prev) => {
+      // Editing: drop this invoice's old line items and its old cash-at-sale payment (if any) before adding the new ones.
+      const ctgSales = editingInvoiceNo
+        ? [...prev.ctgSales.filter((s) => s.invoiceNo !== editingInvoiceNo), ...saleRows]
+        : [...prev.ctgSales, ...saleRows];
+      const ctgPaymentsWithoutOld = editingInvoiceNo
+        ? prev.ctgPayments.filter((p) => !(p.reference === editingInvoiceNo && p.remarks === "Cash received at sale"))
+        : prev.ctgPayments;
+      const ctgPayments = paymentRow ? [...ctgPaymentsWithoutOld, paymentRow] : ctgPaymentsWithoutOld;
+      return {
+        ...prev, ctgSales, ctgPayments,
+        ctgSettings: editingInvoiceNo ? prev.ctgSettings : { ...prev.ctgSettings, saleInvoiceSeq: prev.ctgSettings.saleInvoiceSeq + 1 },
+      };
+    });
+    notify(editingInvoiceNo ? "Invoice updated" : "Invoice saved — stock, due balance and commission updated");
+    return { invoiceNo, date, customerId, salesmanId, items: saleRows, grandTotal, cashReceived: cash, balanceDue: Math.max(grandTotal - cash, 0) };
+  };
+
+  const deleteCtgInvoice = (invoiceNo) => {
+    updateDb((prev) => ({
+      ...prev,
+      ctgSales: prev.ctgSales.filter((s) => s.invoiceNo !== invoiceNo),
+      ctgPayments: prev.ctgPayments.filter((p) => !(p.reference === invoiceNo && p.remarks === "Cash received at sale")),
+    }));
+    notify("Invoice deleted", "danger");
+  };
+
+  const saveCtgPayment = (data) => ctgSave("ctgPayments", "CTGPAY", data, "Payment recorded");
+  const deleteCtgPayment = (id) => ctgDelete("ctgPayments", id, "Payment removed");
+
+  const saveCtgSupplierPayment = (data) => ctgSave("ctgSupplierPayments", "CTGSPAY", data, "Payment to supplier recorded");
+  const deleteCtgSupplierPayment = (id) => ctgDelete("ctgSupplierPayments", id, "Supplier payment removed");
+
+  const saveCtgSettings = (data) => {
+    updateDb((prev) => ({ ...prev, ctgSettings: { ...prev.ctgSettings, ...data } }));
+    notify("CTG settings saved");
+  };
+
   // ---------- auth ----------
   const loginAsAdmin = async (u, p) => {
     const { error } = await supabase.auth.signInWithPassword({ email: u, password: p });
@@ -895,6 +1315,28 @@ export default function App() {
           saveMpPayment={saveMpPayment} deleteMpPayment={deleteMpPayment}
           saveMpSupplierPayment={saveMpSupplierPayment} deleteMpSupplierPayment={deleteMpSupplierPayment}
           saveMpSettings={saveMpSettings}
+          ctgTotals={ctgTotals} ctgStockReport={ctgStockReport} ctgCustomerBalance={ctgCustomerBalance} ctgSupplierBalance={ctgSupplierBalance}
+          nextCtgPurchaseInvoiceNo={nextCtgPurchaseInvoiceNo} nextCtgSaleInvoiceNo={nextCtgSaleInvoiceNo}
+          saveCtgCustomer={saveCtgCustomer} deleteCtgCustomer={deleteCtgCustomer}
+          saveCtgSupplier={saveCtgSupplier} deleteCtgSupplier={deleteCtgSupplier}
+          saveCtgSalesman={saveCtgSalesman} deleteCtgSalesman={deleteCtgSalesman}
+          saveCtgProduct={saveCtgProduct} deleteCtgProduct={deleteCtgProduct}
+          saveCtgPurchase={saveCtgPurchase} deleteCtgPurchase={deleteCtgPurchase}
+          saveCtgSale={saveCtgSale} deleteCtgSale={deleteCtgSale} saveCtgInvoice={saveCtgInvoice} deleteCtgInvoice={deleteCtgInvoice}
+          saveCtgPayment={saveCtgPayment} deleteCtgPayment={deleteCtgPayment}
+          saveCtgSupplierPayment={saveCtgSupplierPayment} deleteCtgSupplierPayment={deleteCtgSupplierPayment}
+          saveCtgSettings={saveCtgSettings}
+          infTotals={infTotals} infStockReport={infStockReport} infCustomerBalance={infCustomerBalance} infSupplierBalance={infSupplierBalance}
+          nextInfPurchaseInvoiceNo={nextInfPurchaseInvoiceNo} nextInfSaleInvoiceNo={nextInfSaleInvoiceNo}
+          saveInfCustomer={saveInfCustomer} deleteInfCustomer={deleteInfCustomer}
+          saveInfSupplier={saveInfSupplier} deleteInfSupplier={deleteInfSupplier}
+          saveInfSalesman={saveInfSalesman} deleteInfSalesman={deleteInfSalesman}
+          saveInfProduct={saveInfProduct} deleteInfProduct={deleteInfProduct}
+          saveInfPurchase={saveInfPurchase} deleteInfPurchase={deleteInfPurchase}
+          saveInfSale={saveInfSale} deleteInfSale={deleteInfSale} saveInfInvoice={saveInfInvoice} deleteInfInvoice={deleteInfInvoice}
+          saveInfPayment={saveInfPayment} deleteInfPayment={deleteInfPayment}
+          saveInfSupplierPayment={saveInfSupplierPayment} deleteInfSupplierPayment={deleteInfSupplierPayment}
+          saveInfSettings={saveInfSettings}
         />
       ) : (
         <CustomerShell
@@ -1144,6 +1586,8 @@ function AdminShell(props) {
     { key: "cashflow", label: "Cash flow", icon: TrendingUp, color: "#2E8B8B", frontColor: "#E29BD1" },
     { key: "reports", label: "Reports", icon: FileBarChart, color: "#4C5B8A", frontColor: "#F0C96B" },
     { key: "multiplug", label: "Multi Plug", icon: Plug, color: "#1F7A5C", frontColor: "#F0A868" },
+    { key: "ctg", label: "CTG", icon: Boxes, color: "#5B6472", frontColor: "#FFD87A" },
+    { key: "infinity", label: "INFINITY", icon: UserCog, color: "#8A5AC7", frontColor: "#7FD1E0" },
     { key: "settings", label: "Settings", icon: Settings, color: "#7A7A7A", frontColor: "#A8E6D9" },
   ];
   return (
@@ -1159,12 +1603,14 @@ function AdminShell(props) {
       {view === "cashflow" && <CashFlowPage {...props} />}
       {view === "reports" && <ReportsPage {...props} />}
       {view === "multiplug" && <MultiPlugPage {...props} />}
+      {view === "ctg" && <CtgPage {...props} />}
+      {view === "infinity" && <InfinityPage {...props} />}
       {view === "settings" && <SettingsPage {...props} />}
     </Shell>
   );
 }
 
-function AdminDashboard({ T, db, totals, monthlyChartData, cashFlowSeries, topCustomers, outstandingCustomers, mpTotals }) {
+function AdminDashboard({ T, db, totals, monthlyChartData, cashFlowSeries, topCustomers, outstandingCustomers, mpTotals, ctgTotals, infTotals }) {
   const RC = useRecharts();
   const cards = [
     { label: "Total customers", value: db.customers.length, tone: "", accent: "#B8912F" },
@@ -1179,6 +1625,8 @@ function AdminDashboard({ T, db, totals, monthlyChartData, cashFlowSeries, topCu
     { label: "Monthly profit / loss", value: fmtMoney(totals.monthProfit), tone: totals.monthProfit >= 0 ? "good" : "danger", accent: "#1F7A5C" },
     { label: "Accounts payable", value: fmtMoney(totals.totalPayable), tone: totals.totalPayable > 0 ? "danger" : "", accent: "#8A5A2B" },
     { label: "Multi Plug — cash in hand", value: fmtMoney(mpTotals.cashInHand), tone: "", accent: "#1F7A5C" },
+    { label: "CTG — cash in hand", value: fmtMoney(ctgTotals.cashInHand), tone: "", accent: "#5B6472" },
+    { label: "INFINITY — cash in hand", value: fmtMoney(infTotals.cashInHand), tone: "", accent: "#8A5AC7" },
   ];
   return (
     <div>
@@ -3290,6 +3738,2436 @@ function MpSettingsPage({ T, db, saveMpSettings }) {
       </Card>
       <div style={{ fontSize: 12, color: T.slateLight, marginTop: 14, maxWidth: 420 }}>
         Multi Plug has its own customers, suppliers, products and cash — completely separate from the main ARHAM TRADERS ledger. Its cash-in-hand also appears as a card on the main Dashboard.
+      </div>
+    </div>
+  );
+}
+
+// ================= INFINITY MODULE =================
+const INF_SUBTABS = [
+  { key: "dashboard", label: "Dashboard" },
+  { key: "stock", label: "Stock Report" },
+  { key: "purchase", label: "Purchase" },
+  { key: "sales", label: "Sales" },
+  { key: "salesmen", label: "Salesmen" },
+  { key: "customers", label: "Customers" },
+  { key: "suppliers", label: "Suppliers" },
+  { key: "payments", label: "Cash Receiving" },
+  { key: "supplierPayments", label: "Supplier Payments" },
+  { key: "settings", label: "Settings" },
+];
+
+function InfinityPage(props) {
+  const { T } = props;
+  const [sub, setSub] = useState("dashboard");
+  return (
+    <div>
+      <PageHeader T={T} title="INFINITY" subtitle="A separate product line — its own stock, purchases, sales and salesmen" />
+      <div style={{ display: "flex", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
+        {INF_SUBTABS.map((t) => (
+          <button key={t.key} onClick={() => setSub(t.key)} className="lg-btn"
+            style={{
+              background: sub === t.key ? T.buttonFill : "transparent", color: sub === t.key ? "#fff" : T.slate,
+              border: `1px solid ${sub === t.key ? T.buttonFill : T.line}`, padding: "7px 14px", fontSize: 12.5,
+            }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {sub === "dashboard" && <InfDashboard {...props} />}
+      {sub === "stock" && <InfStockReportPage {...props} />}
+      {sub === "purchase" && <InfPurchasePage {...props} />}
+      {sub === "sales" && <InfSalesPage {...props} />}
+      {sub === "salesmen" && <InfSalesmenPage {...props} />}
+      {sub === "customers" && <InfCustomersPage {...props} />}
+      {sub === "suppliers" && <InfSuppliersPage {...props} />}
+      {sub === "payments" && <InfPaymentsPage {...props} />}
+      {sub === "supplierPayments" && <InfSupplierPaymentsPage {...props} />}
+      {sub === "settings" && <InfSettingsPage {...props} />}
+    </div>
+  );
+}
+
+function InfDashboard({ T, db, infTotals, infStockReport }) {
+  const totalInStock = infStockReport.reduce((a, r) => a + r.remainingQty, 0);
+  const cards = [
+    { label: "Total products", value: db.infProducts.length, accent: "#B8912F" },
+    { label: "Total in stock (pcs)", value: totalInStock, accent: "#C1663B" },
+    { label: "Total sales", value: fmtMoney(infTotals.totalSales), accent: "#3B6EA5" },
+    { label: "Total collections", value: fmtMoney(infTotals.totalCollections), tone: "good", accent: "#2F6B4F" },
+    { label: "Total outstanding (customers)", value: fmtMoney(infTotals.totalOutstanding), tone: "danger", accent: "#B23A2E" },
+    { label: "Accounts payable (suppliers)", value: fmtMoney(infTotals.totalPayable), tone: infTotals.totalPayable > 0 ? "danger" : "", accent: "#8A5A2B" },
+    { label: "Cash in hand", value: fmtMoney(infTotals.cashInHand), accent: "#4C5B8A" },
+    { label: "Stock value (at DP)", value: fmtMoney(infTotals.totalStockDPValue), accent: "#6B4C9A" },
+    { label: "Stock value (at TP)", value: fmtMoney(infTotals.totalStockTPValue), tone: "good", accent: "#2E8B8B" },
+    { label: "Total salesman commission", value: fmtMoney(infTotals.totalCommission), accent: "#A34C6B" },
+  ];
+  const exportPDF = () => downloadPDFTable({
+    filename: "infinity-dashboard-summary.pdf", title: "INFINITY — Dashboard Summary",
+    columns: [{ header: "Metric", key: "label" }, { header: "Value", key: "value", align: "right" }],
+    rows: cards.map((c) => ({ label: c.label, value: String(c.value) })),
+  });
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+        <button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px,1fr))", gap: 12, marginBottom: 20 }}>
+        {cards.map((c) => <StatCard key={c.label} T={T} {...c} />)}
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Product</th><th style={{ textAlign: "right" }}>In stock</th><th style={{ textAlign: "right" }}>Avg DP</th><th style={{ textAlign: "right" }}>Auto TP</th></tr></thead>
+          <tbody>
+            {infStockReport.map((r) => (
+              <tr key={r.productId}>
+                <td>{r.productName}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{r.remainingQty}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.avgDP)}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(r.autoTP)}</td>
+              </tr>
+            ))}
+            {!infStockReport.length && <tr><td colSpan={4} style={{ textAlign: "center", padding: 20, color: T.slateLight }}>No products yet.</td></tr>}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+function InfStockReportPage({ T, infStockReport, db, saveInfProduct, deleteInfProduct }) {
+  const [editModal, setEditModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const totalDP = infStockReport.reduce((a, r) => a + r.totalDPValue, 0);
+  const totalTP = infStockReport.reduce((a, r) => a + r.totalTPValue, 0);
+  const totalPurchasedQty = infStockReport.reduce((a, r) => a + r.totalPurchasedQty, 0);
+  const totalSoldQty = infStockReport.reduce((a, r) => a + r.totalSoldQty, 0);
+  const totalInStock = infStockReport.reduce((a, r) => a + r.remainingQty, 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "infinity-stock-report.pdf", title: "INFINITY — Stock Report", subtitle: "TP auto-suggested from DP using the margin % set in Settings",
+    columns: [
+      { header: "Product", key: "product" }, { header: "Bought from", key: "suppliers" },
+      { header: "Purchased", key: "purchased", align: "right" }, { header: "Sold", key: "sold", align: "right" }, { header: "In stock", key: "stock", align: "right" },
+      { header: "DP (avg)", key: "dp", align: "right" }, { header: "TP (auto)", key: "tp", align: "right" },
+      { header: "Total DP value", key: "dpValue", align: "right" }, { header: "Total TP value", key: "tpValue", align: "right" },
+    ],
+    rows: infStockReport.map((r) => ({
+      product: r.productName, suppliers: r.suppliers.join(", ") || "—", purchased: r.totalPurchasedQty, sold: r.totalSoldQty, stock: r.remainingQty,
+      dp: fmtMoney(r.avgDP), tp: fmtMoney(r.autoTP), dpValue: fmtMoney(r.totalDPValue), tpValue: fmtMoney(r.totalTPValue),
+    })),
+    totalsRow: { product: "Total", purchased: totalPurchasedQty, sold: totalSoldQty, stock: totalInStock, dpValue: fmtMoney(totalDP), tpValue: fmtMoney(totalTP) },
+  });
+  return (
+    <div>
+      <PageHeader T={T} title="Stock report" subtitle="TP is auto-suggested from DP using the margin % set in Settings"
+        action={<button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button>} />
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead>
+            <tr>
+              <th>Product</th><th>Bought from</th>
+              <th style={{ textAlign: "right" }}>Purchased</th><th style={{ textAlign: "right" }}>Sold</th><th style={{ textAlign: "right" }}>In stock</th>
+              <th style={{ textAlign: "right" }}>DP (avg)</th><th style={{ textAlign: "right" }}>TP (auto)</th>
+              <th style={{ textAlign: "right" }}>Total DP value</th><th style={{ textAlign: "right" }}>Total TP value</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {infStockReport.map((r) => (
+              <tr key={r.productId}>
+                <td style={{ fontWeight: 600 }}>{r.productName}</td>
+                <td style={{ fontSize: 12, color: T.slateLight }}>{r.suppliers.join(", ") || "—"}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{r.totalPurchasedQty}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{r.totalSoldQty}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, color: r.remainingQty > 0 ? T.green : T.rule }}>{r.remainingQty}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.avgDP)}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.autoTP)}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.totalDPValue)}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.totalTPValue)}</td>
+                <td style={{ whiteSpace: "nowrap" }}>
+                  <button onClick={() => setEditModal(db.infProducts.find((p) => p.id === r.productId))} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                  <button onClick={() => setConfirmDel(r)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                </td>
+              </tr>
+            ))}
+            {!infStockReport.length && <tr><td colSpan={10} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No products yet — add one from Purchase entry.</td></tr>}
+          </tbody>
+          {!!infStockReport.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={2} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{totalPurchasedQty}</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{totalSoldQty}</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right", color: T.green }}>{totalInStock}</td>
+                <td colSpan={2} style={{ borderTop: `2px solid ${T.line}` }}></td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{fmtMoney(totalDP)}</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{fmtMoney(totalTP)}</td>
+                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </Card>
+      {editModal && (
+        <ModalShell T={T} title="Edit product name" onClose={() => setEditModal(null)}>
+          <InfProductRenameForm T={T} product={editModal} onSave={(d) => { saveInfProduct(d); setEditModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && (
+        <ConfirmModal T={T} title="Delete product?"
+          message={confirmDel.totalPurchasedQty > 0 || confirmDel.totalSoldQty > 0
+            ? `${confirmDel.productName} already has purchase/sale history — deleting it will NOT delete those old entries, but the product name will disappear from new entry forms.`
+            : `Remove ${confirmDel.productName}?`}
+          onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteInfProduct(confirmDel.productId); setConfirmDel(null); }} />
+      )}
+    </div>
+  );
+}
+
+function InfProductRenameForm({ T, product, onSave }) {
+  const [name, setName] = useState(product.name);
+  return (
+    <>
+      <Field T={T} label="Product name"><input className="lg-input" value={name} onChange={(e) => setName(e.target.value)} /></Field>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!name} onClick={() => onSave({ ...product, name })}>Save</button>
+    </>
+  );
+}
+
+function InfCustomersPage({ T, db, saveInfCustomer, deleteInfCustomer, infCustomerBalance }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const filtered = db.infCustomers.filter((c) => {
+    const matchQ = !q || c.name.toLowerCase().includes(q.toLowerCase()) || (c.mobile || "").includes(q);
+    const matchStatus = statusFilter === "All" || c.status === statusFilter;
+    return matchQ && matchStatus;
+  });
+  const totalBalance = filtered.reduce((a, c) => a + infCustomerBalance(c.id), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "infinity-customers.pdf", title: "INFINITY — Customers Report",
+    columns: [
+      { header: "Name", key: "name" }, { header: "Mobile", key: "mobile" }, { header: "Address", key: "address" },
+      { header: "Status", key: "status" }, { header: "Balance", key: "balance", align: "right" },
+    ],
+    rows: filtered.map((c) => ({ name: c.name, mobile: c.mobile || "—", address: c.address || "—", status: c.status, balance: fmtMoney(infCustomerBalance(c.id)) })),
+    totalsRow: { name: "Total", balance: fmtMoney(totalBalance) },
+  });
+  return (
+    <div>
+      <PageHeader T={T} title="INFINITY customers" subtitle={`${db.infCustomers.length} total`}
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add customer</button></div>} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search name or mobile" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <select className="lg-input" style={{ width: 140 }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option>All</option><option>Active</option><option>Inactive</option>
+        </select>
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Name</th><th>Mobile</th><th>Status</th><th>Balance</th><th></th></tr></thead>
+          <tbody>
+            {filtered.map((c) => {
+              const bal = infCustomerBalance(c.id);
+              return (
+                <tr key={c.id}>
+                  <td style={{ fontWeight: 600 }}>{c.name}</td>
+                  <td className="lg-mono">{c.mobile}</td>
+                  <td><span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: c.status === "Active" ? T.greenBg : T.dangerBg, color: c.status === "Active" ? T.green : T.rule, fontWeight: 600 }}>{c.status}</span></td>
+                  <td className="lg-mono" style={{ color: bal > 0 ? T.rule : T.green, fontWeight: 600 }}>{fmtMoney(bal)}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setModal(c)} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                    <button onClick={() => setConfirmDel(c)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!filtered.length && <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No customers found.</td></tr>}
+          </tbody>
+          {!!filtered.length && (
+            <tfoot><tr>
+              <td colSpan={3} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total balance</td>
+              <td className="lg-mono" style={{ fontWeight: 700, color: totalBalance > 0 ? T.rule : T.green, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalBalance)}</td>
+              <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+            </tr></tfoot>
+          )}
+        </table>
+      </Card>
+      {modal && (
+        <ModalShell T={T} title={modal.id ? "Edit customer" : "Add customer"} onClose={() => setModal(null)}>
+          <InfPersonForm T={T} initial={modal} onSave={(d) => { saveInfCustomer(d); setModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && <ConfirmModal T={T} title="Delete customer?" message={`Remove ${confirmDel.name}?`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteInfCustomer(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function InfSuppliersPage({ T, db, saveInfSupplier, deleteInfSupplier, infSupplierBalance }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const filtered = db.infSuppliers.filter((s) => {
+    const matchQ = !q || s.name.toLowerCase().includes(q.toLowerCase()) || (s.mobile || "").includes(q);
+    const matchStatus = statusFilter === "All" || s.status === statusFilter;
+    return matchQ && matchStatus;
+  });
+  const totalPayable = filtered.reduce((a, s) => a + infSupplierBalance(s.id), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "infinity-suppliers.pdf", title: "INFINITY — Suppliers Report",
+    columns: [
+      { header: "Name", key: "name" }, { header: "Mobile", key: "mobile" }, { header: "Address", key: "address" },
+      { header: "Status", key: "status" }, { header: "Payable", key: "payable", align: "right" },
+    ],
+    rows: filtered.map((s) => ({ name: s.name, mobile: s.mobile || "—", address: s.address || "—", status: s.status, payable: fmtMoney(infSupplierBalance(s.id)) })),
+    totalsRow: { name: "Total", payable: fmtMoney(totalPayable) },
+  });
+  return (
+    <div>
+      <PageHeader T={T} title="INFINITY suppliers" subtitle={`${db.infSuppliers.length} total`}
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add supplier</button></div>} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search name or mobile" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <select className="lg-input" style={{ width: 140 }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option>All</option><option>Active</option><option>Inactive</option>
+        </select>
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Name</th><th>Mobile</th><th>Status</th><th>Payable</th><th></th></tr></thead>
+          <tbody>
+            {filtered.map((s) => {
+              const bal = infSupplierBalance(s.id);
+              return (
+                <tr key={s.id}>
+                  <td style={{ fontWeight: 600 }}>{s.name}</td>
+                  <td className="lg-mono">{s.mobile}</td>
+                  <td><span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: s.status === "Active" ? T.greenBg : T.dangerBg, color: s.status === "Active" ? T.green : T.rule, fontWeight: 600 }}>{s.status}</span></td>
+                  <td className="lg-mono" style={{ color: bal > 0 ? T.rule : T.green, fontWeight: 600 }}>{fmtMoney(bal)}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setModal(s)} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                    <button onClick={() => setConfirmDel(s)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!filtered.length && <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No suppliers found.</td></tr>}
+          </tbody>
+          {!!filtered.length && (
+            <tfoot><tr>
+              <td colSpan={3} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total payable</td>
+              <td className="lg-mono" style={{ fontWeight: 700, color: totalPayable > 0 ? T.rule : T.green, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalPayable)}</td>
+              <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+            </tr></tfoot>
+          )}
+        </table>
+      </Card>
+      {modal && (
+        <ModalShell T={T} title={modal.id ? "Edit supplier" : "Add supplier"} onClose={() => setModal(null)}>
+          <InfPersonForm T={T} initial={modal} onSave={(d) => { saveInfSupplier(d); setModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && <ConfirmModal T={T} title="Delete supplier?" message={`Remove ${confirmDel.name}?`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteInfSupplier(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function InfPersonForm({ T, initial, onSave }) {
+  const [f, setF] = useState({
+    id: initial.id, name: initial.name || "", mobile: initial.mobile || "", address: initial.address || "",
+    openingBalance: initial.openingBalance || 0, status: initial.status || "Active",
+  });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <>
+      <Field T={T} label="Name"><input className="lg-input" value={f.name} onChange={set("name")} /></Field>
+      <Field T={T} label="Mobile"><input className="lg-input" value={f.mobile} onChange={set("mobile")} /></Field>
+      <Field T={T} label="Address"><input className="lg-input" value={f.address} onChange={set("address")} /></Field>
+      <Field T={T} label="Opening balance"><input className="lg-input" type="number" value={f.openingBalance} onChange={set("openingBalance")} /></Field>
+      <Field T={T} label="Status">
+        <select className="lg-input" value={f.status} onChange={set("status")}><option>Active</option><option>Inactive</option></select>
+      </Field>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!f.name} onClick={() => onSave(f)}>Save</button>
+    </>
+  );
+}
+
+function InfSalesmenPage({ T, db, saveInfSalesman, deleteInfSalesman, infCustomerBalance }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const [q, setQ] = useState("");
+  const filteredSalesmen = db.infSalesmen.filter((sm) => !q || sm.name.toLowerCase().includes(q.toLowerCase()) || (sm.mobile || "").includes(q));
+
+  const salesmanStats = (smId) => {
+    const sales = db.infSales.filter((s) => s.salesmanId === smId);
+    const sm = db.infSalesmen.find((x) => x.id === smId);
+    const pct = sm ? Number(sm.commissionPercent || 0) : 0; // 0 until a commission % is set for this salesman
+    const totalSold = sales.reduce((a, s) => a + Number(s.total), 0);
+    const totalQty = sales.reduce((a, s) => a + Number(s.qty), 0);
+    const totalDiscount = sales.reduce((a, s) => a + Number(s.discount || 0), 0);
+    const commission = totalSold * (pct / 100);
+    const byCustomer = {};
+    sales.forEach((s) => {
+      const cust = db.infCustomers.find((c) => c.id === s.customerId);
+      const name = cust ? cust.name : "—";
+      if (!byCustomer[name]) byCustomer[name] = { qty: 0, total: 0, discount: 0, customerId: s.customerId };
+      byCustomer[name].qty += Number(s.qty);
+      byCustomer[name].total += Number(s.total);
+      byCustomer[name].discount += Number(s.discount || 0);
+    });
+    return { totalSold, totalQty, totalDiscount, commission, byCustomer };
+  };
+
+  const exportPDF = () => downloadPDFTable({
+    filename: "infinity-salesmen.pdf", title: "INFINITY — Salesmen Report",
+    columns: [
+      { header: "Salesman", key: "name" }, { header: "Commission %", key: "pct", align: "right" },
+      { header: "Qty sold", key: "qty", align: "right" }, { header: "Discount given", key: "discount", align: "right" },
+      { header: "Total sales", key: "total", align: "right" }, { header: "Commission earned", key: "commission", align: "right" },
+    ],
+    rows: filteredSalesmen.map((sm) => {
+      const st = salesmanStats(sm.id);
+      return { name: sm.name, pct: sm.commissionPercent ? `${sm.commissionPercent}%` : "Not set", qty: st.totalQty, discount: fmtMoney(st.totalDiscount), total: fmtMoney(st.totalSold), commission: fmtMoney(st.commission) };
+    }),
+  });
+
+  return (
+    <div>
+      <PageHeader T={T} title="Salesmen" subtitle="Sales, discounts given, and commission per salesman"
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add salesman</button></div>} />
+      <div style={{ position: "relative", maxWidth: 280, marginBottom: 14 }}>
+        <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+        <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search name or mobile" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {filteredSalesmen.map((sm) => {
+          const stats = salesmanStats(sm.id);
+          const isOpen = expanded === sm.id;
+          return (
+            <Card key={sm.id} T={T} style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 14, cursor: "pointer" }} onClick={() => setExpanded(isOpen ? null : sm.id)}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{sm.name}</div>
+                  <div style={{ fontSize: 12, color: T.slateLight }}>{sm.mobile} · Commission: {sm.commissionPercent ? `${sm.commissionPercent}%` : <span style={{ color: T.rule }}>Not set</span>}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 11, color: T.slate }}>Total sold</div>
+                    <div className="lg-mono" style={{ fontWeight: 700 }}>{fmtMoney(stats.totalSold)}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 11, color: T.slate }}>Commission</div>
+                    <div className="lg-mono" style={{ fontWeight: 700, color: T.green }}>{fmtMoney(stats.commission)}</div>
+                  </div>
+                  <button onClick={(e) => { e.stopPropagation(); setModal(sm); }} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); setConfirmDel(sm); }} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                </div>
+              </div>
+              {isOpen && (
+                <div style={{ borderTop: `1px solid ${T.line}`, padding: "0 14px 14px" }}>
+                  <table className="lg-table">
+                    <thead><tr><th>Customer</th><th style={{ textAlign: "right" }}>Qty sold</th><th style={{ textAlign: "right" }}>Discount given</th><th style={{ textAlign: "right" }}>Sales value</th><th style={{ textAlign: "right" }}>Customer due</th></tr></thead>
+                    <tbody>
+                      {Object.entries(stats.byCustomer).map(([name, v]) => (
+                        <tr key={name}>
+                          <td>{name}</td>
+                          <td className="lg-mono" style={{ textAlign: "right" }}>{v.qty}</td>
+                          <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(v.discount)}</td>
+                          <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(v.total)}</td>
+                          <td className="lg-mono" style={{ textAlign: "right", color: T.rule }}>{fmtMoney(infCustomerBalance(v.customerId))}</td>
+                        </tr>
+                      ))}
+                      {!Object.keys(stats.byCustomer).length && <tr><td colSpan={5} style={{ textAlign: "center", padding: 14, color: T.slateLight }}>No sales yet.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          );
+        })}
+        {!filteredSalesmen.length && <div style={{ textAlign: "center", padding: 30, color: T.slateLight }}>No salesmen found.</div>}
+      </div>
+      {modal && <InfSalesmanModal T={T} initial={modal} onClose={() => setModal(null)} onSave={(d) => { saveInfSalesman(d); setModal(null); }} />}
+      {confirmDel && <ConfirmModal T={T} title="Delete salesman?" message={`Remove ${confirmDel.name}?`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteInfSalesman(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function InfSalesmanModal({ T, initial, onClose, onSave }) {
+  const [f, setF] = useState({
+    id: initial.id, name: initial.name || "", mobile: initial.mobile || "",
+    commissionPercent: initial.commissionPercent ?? "", status: initial.status || "Active",
+  });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <ModalShell T={T} title={initial.id ? "Edit salesman" : "Add salesman"} onClose={onClose}>
+      <Field T={T} label="Name"><input className="lg-input" value={f.name} onChange={set("name")} /></Field>
+      <Field T={T} label="Mobile"><input className="lg-input" value={f.mobile} onChange={set("mobile")} /></Field>
+      <Field T={T} label="Commission % (on total sales value) — set this yourself, no default"><input className="lg-input" type="number" placeholder="e.g. 10" value={f.commissionPercent} onChange={set("commissionPercent")} /></Field>
+      <Field T={T} label="Status">
+        <select className="lg-input" value={f.status} onChange={set("status")}><option>Active</option><option>Inactive</option></select>
+      </Field>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!f.name || f.commissionPercent === ""} onClick={() => onSave({ ...f, commissionPercent: Number(f.commissionPercent) })}>Save salesman</button>
+    </ModalShell>
+  );
+}
+
+function InfPurchasePage({ T, db, saveInfPurchase, deleteInfPurchase, saveInfProduct, nextInfPurchaseInvoiceNo }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [q, setQ] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const rows = [...db.infPurchases].sort((a, b) => (b.date || "").localeCompare(a.date || "")).filter((p) => {
+    const sup = db.infSuppliers.find((s) => s.id === p.supplierId);
+    const matchQ = !q || p.productName.toLowerCase().includes(q.toLowerCase()) || (sup && sup.name.toLowerCase().includes(q.toLowerCase()));
+    const matchFrom = !from || p.date >= from;
+    const matchTo = !to || p.date <= to;
+    return matchQ && matchFrom && matchTo;
+  });
+  const totalQty = rows.reduce((a, p) => a + Number(p.qty), 0);
+  const totalValue = rows.reduce((a, p) => a + Number(p.qty) * Number(p.dp), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "infinity-purchases.pdf", title: "INFINITY — Purchase Report",
+    columns: [
+      { header: "Invoice", key: "invoice" }, { header: "Date", key: "date" }, { header: "Supplier", key: "supplier" }, { header: "Product", key: "product" },
+      { header: "Qty", key: "qty", align: "right" }, { header: "DP", key: "dp", align: "right" }, { header: "Total", key: "total", align: "right" },
+    ],
+    rows: rows.map((p) => {
+      const sup = db.infSuppliers.find((s) => s.id === p.supplierId);
+      return { invoice: p.invoiceNo, date: fmtDateDMY(p.date), supplier: sup ? sup.name : "—", product: p.productName, qty: p.qty, dp: fmtMoney(p.dp), total: fmtMoney(Number(p.qty) * Number(p.dp)) };
+    }),
+    totalsRow: { invoice: "Total", qty: totalQty, total: fmtMoney(totalValue) },
+  });
+  return (
+    <div>
+      <PageHeader T={T} title="Purchase entry" subtitle="Buying stock from a supplier at DP (Dealer Price) — this adds to stock"
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})} disabled={!db.infSuppliers.length}><Plus size={14} /> New purchase</button></div>} />
+      {!db.infSuppliers.length && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a INFINITY supplier first (Suppliers tab).</div>}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search product or supplier" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <input className="lg-input" style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <input className="lg-input" style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Invoice</th><th>Date</th><th>Supplier</th><th>Product</th><th>Qty</th><th>DP</th><th>Total</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((p) => {
+              const sup = db.infSuppliers.find((s) => s.id === p.supplierId);
+              return (
+                <tr key={p.id}>
+                  <td className="lg-mono">{p.invoiceNo}</td>
+                  <td className="lg-mono">{fmtDateDMY(p.date)}</td>
+                  <td>{sup ? sup.name : "—"}</td>
+                  <td>{p.productName}</td>
+                  <td className="lg-mono">{p.qty}</td>
+                  <td className="lg-mono">{fmtMoney(p.dp)}</td>
+                  <td className="lg-mono" style={{ fontWeight: 600 }}>{fmtMoney(Number(p.qty) * Number(p.dp))}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setConfirmDel(p)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && <tr><td colSpan={8} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No purchases recorded yet.</td></tr>}
+          </tbody>
+          {!!rows.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={4} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{totalQty}</td>
+                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalValue)}</td>
+                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </Card>
+      {modal && <InfPurchaseModal T={T} db={db} nextInfPurchaseInvoiceNo={nextInfPurchaseInvoiceNo} onClose={() => setModal(null)} onSave={(d, newProduct) => { saveInfPurchase(d, newProduct); setModal(null); }} />}
+      {confirmDel && <ConfirmModal T={T} title="Delete purchase?" message="This will reduce stock and the amount owed to this supplier." onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteInfPurchase(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function InfPurchaseModal({ T, db, nextInfPurchaseInvoiceNo, onClose, onSave }) {
+  const [productMode, setProductMode] = useState(db.infProducts.length ? "existing" : "new");
+  const [f, setF] = useState({
+    date: todayISO(), supplierId: db.infSuppliers[0]?.id || "", productId: db.infProducts[0]?.id || "",
+    newProductName: "", qty: 1, dp: 0, remarks: "",
+  });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const total = (Number(f.qty) || 0) * (Number(f.dp) || 0);
+
+  const save = () => {
+    let productId = f.productId;
+    let productName = db.infProducts.find((p) => p.id === productId)?.name || "";
+    let newProduct = null;
+    if (productMode === "new") {
+      productId = uid("INFPRD");
+      productName = f.newProductName;
+      newProduct = { id: productId, name: productName, status: "Active" };
+    }
+    onSave({ date: f.date, supplierId: f.supplierId, productId, productName, qty: Number(f.qty), dp: Number(f.dp), remarks: f.remarks }, newProduct);
+  };
+
+  return (
+    <ModalShell T={T} title="New purchase entry" onClose={onClose}>
+      <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 8 }}>Invoice: <span className="lg-mono">{nextInfPurchaseInvoiceNo()}</span></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Date"><input className="lg-input" type="date" value={f.date} onChange={set("date")} /></Field>
+        <Field T={T} label="Supplier">
+          <select className="lg-input" value={f.supplierId} onChange={set("supplierId")}>
+            {db.infSuppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field T={T} label="Product">
+        <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+          <button type="button" className="lg-btn" onClick={() => setProductMode("existing")} style={{ background: productMode === "existing" ? T.buttonFill : "transparent", color: productMode === "existing" ? "#fff" : T.slate, border: `1px solid ${T.line}`, fontSize: 12 }}>Existing product</button>
+          <button type="button" className="lg-btn" onClick={() => setProductMode("new")} style={{ background: productMode === "new" ? T.buttonFill : "transparent", color: productMode === "new" ? "#fff" : T.slate, border: `1px solid ${T.line}`, fontSize: 12 }}>New product</button>
+        </div>
+        {productMode === "existing" ? (
+          <select className="lg-input" value={f.productId} onChange={set("productId")}>
+            {db.infProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        ) : (
+          <input className="lg-input" placeholder="New product name" value={f.newProductName} onChange={set("newProductName")} />
+        )}
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Quantity"><input className="lg-input" type="number" value={f.qty} onChange={set("qty")} /></Field>
+        <Field T={T} label="DP (purchase price / unit)"><input className="lg-input" type="number" value={f.dp} onChange={set("dp")} /></Field>
+      </div>
+      <Field T={T} label="Remarks"><input className="lg-input" value={f.remarks} onChange={set("remarks")} /></Field>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0" }}>
+        <span style={{ fontSize: 13, color: T.slate }}>Total (added to payable)</span>
+        <span className="lg-mono" style={{ fontSize: 18, fontWeight: 600 }}>{fmtMoney(total)}</span>
+      </div>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center" }}
+        disabled={!f.supplierId || (productMode === "existing" ? !f.productId : !f.newProductName)}
+        onClick={save}>Save purchase</button>
+    </ModalShell>
+  );
+}
+
+function InfSalesPage({ T, db, deleteInfInvoice, saveInfInvoice, infStockReport, nextInfSaleInvoiceNo }) {
+  const [modal, setModal] = useState(null); // {} for new, invoice object for edit, null closed
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [invoicePreview, setInvoicePreview] = useState(null);
+  const [q, setQ] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [salesmanFilter, setSalesmanFilter] = useState("All");
+
+  // DP (cost) isn't stored on each sale line — it's looked up from the product's current
+  // average purchase price (Stock Report), same weighted-average method used there.
+  const withProfit = (s) => {
+    const stockRow = infStockReport.find((r) => r.productId === s.productId);
+    const dpUnit = stockRow ? stockRow.avgDP : 0;
+    const dpCost = dpUnit * Number(s.qty);
+    return { ...s, dpUnit, dpCost, profit: Number(s.total) - dpCost };
+  };
+
+  // Group every sale line item by its shared invoice number into one invoice per row.
+  const invoiceMap = {};
+  db.infSales.forEach((s) => {
+    if (!invoiceMap[s.invoiceNo]) invoiceMap[s.invoiceNo] = { invoiceNo: s.invoiceNo, date: s.date, customerId: s.customerId, salesmanId: s.salesmanId, items: [] };
+    invoiceMap[s.invoiceNo].items.push(withProfit(s));
+  });
+  const invoices = Object.values(invoiceMap).map((inv) => {
+    const qty = inv.items.reduce((a, it) => a + Number(it.qty), 0);
+    const discount = inv.items.reduce((a, it) => a + Number(it.discount || 0), 0);
+    const total = inv.items.reduce((a, it) => a + Number(it.total), 0);
+    const profit = inv.items.reduce((a, it) => a + it.profit, 0);
+    const cashReceived = db.infPayments.filter((p) => p.reference === inv.invoiceNo && p.remarks === "Cash received at sale").reduce((a, p) => a + Number(p.amount), 0);
+    return { ...inv, qty, discount, total, profit, cashReceived, balanceDue: Math.max(total - cashReceived, 0) };
+  }).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
+  const filtered = invoices.filter((inv) => {
+    const cust = db.infCustomers.find((c) => c.id === inv.customerId);
+    const matchQ = !q || inv.items.some((it) => it.productName.toLowerCase().includes(q.toLowerCase())) || (cust && cust.name.toLowerCase().includes(q.toLowerCase()));
+    const matchFrom = !from || inv.date >= from;
+    const matchTo = !to || inv.date <= to;
+    const matchSalesman = salesmanFilter === "All" || inv.salesmanId === salesmanFilter;
+    return matchQ && matchFrom && matchTo && matchSalesman;
+  });
+
+  const totals = filtered.reduce((a, inv) => ({
+    qty: a.qty + inv.qty, discount: a.discount + inv.discount, total: a.total + inv.total, profit: a.profit + inv.profit,
+  }), { qty: 0, discount: 0, total: 0, profit: 0 });
+
+  const exportPDF = () => downloadPDFTable({
+    filename: "infinity-sales.pdf", title: "INFINITY — Sales Report (by invoice)",
+    columns: [
+      { header: "Invoice", key: "invoice" }, { header: "Date", key: "date" }, { header: "Customer", key: "customer" }, { header: "Salesman", key: "salesman" }, { header: "Items", key: "items" },
+      { header: "Qty", key: "qty", align: "right" }, { header: "Discount", key: "discount", align: "right" }, { header: "Total", key: "total", align: "right" }, { header: "Profit", key: "profit", align: "right" },
+    ],
+    rows: filtered.map((inv) => {
+      const cust = db.infCustomers.find((c) => c.id === inv.customerId);
+      const sm = db.infSalesmen.find((x) => x.id === inv.salesmanId);
+      return {
+        invoice: inv.invoiceNo, date: fmtDateDMY(inv.date), customer: cust ? cust.name : "—", salesman: sm ? sm.name : "—",
+        items: inv.items.map((it) => it.productName).join(", "), qty: inv.qty, discount: fmtMoney(inv.discount), total: fmtMoney(inv.total), profit: fmtMoney(inv.profit),
+      };
+    }),
+    totalsRow: { invoice: "Total", qty: totals.qty, discount: fmtMoney(totals.discount), total: fmtMoney(totals.total), profit: fmtMoney(totals.profit) },
+  });
+
+  const openPreview = (inv) => setInvoicePreview({
+    invoiceNo: inv.invoiceNo, date: inv.date, customerId: inv.customerId, salesmanId: inv.salesmanId,
+    items: inv.items, grandTotal: inv.total, cashReceived: inv.cashReceived, balanceDue: inv.balanceDue,
+  });
+
+  return (
+    <div>
+      <PageHeader T={T} title="Sales entry" subtitle="One invoice per customer — add several products, take cash payment, and download a PDF"
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})} disabled={!db.infCustomers.length || !db.infProducts.length}><Plus size={14} /> New invoice</button></div>} />
+      {(!db.infCustomers.length || !db.infProducts.length) && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a customer and at least one product (via Purchase entry) first.</div>}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search product or customer" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <select className="lg-input" style={{ width: 160 }} value={salesmanFilter} onChange={(e) => setSalesmanFilter(e.target.value)}>
+          <option value="All">All salesmen</option>
+          {db.infSalesmen.map((sm) => <option key={sm.id} value={sm.id}>{sm.name}</option>)}
+        </select>
+        <input className="lg-input" style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <input className="lg-input" style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Salesman</th><th>Items</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Discount</th><th style={{ textAlign: "right" }}>Total</th><th style={{ textAlign: "right" }}>Profit</th><th style={{ textAlign: "right" }}>Balance</th><th></th></tr></thead>
+          <tbody>
+            {filtered.map((inv) => {
+              const cust = db.infCustomers.find((c) => c.id === inv.customerId);
+              const sm = db.infSalesmen.find((x) => x.id === inv.salesmanId);
+              return (
+                <tr key={inv.invoiceNo}>
+                  <td>
+                    <button onClick={() => openPreview(inv)} className="lg-mono" style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0, fontWeight: 600, color: T.ink, textDecoration: "underline", textDecorationColor: T.line, fontSize: 12.5 }}>
+                      {inv.invoiceNo}
+                    </button>
+                  </td>
+                  <td className="lg-mono">{fmtDateDMY(inv.date)}</td>
+                  <td>{cust ? cust.name : "—"}</td>
+                  <td>{sm ? sm.name : "—"}</td>
+                  <td style={{ fontSize: 12, color: T.slateLight, maxWidth: 180 }}>{inv.items.map((it) => it.productName).join(", ")}</td>
+                  <td className="lg-mono" style={{ textAlign: "right" }}>{inv.qty}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", color: T.rule }}>{fmtMoney(inv.discount)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(inv.total)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600, color: inv.profit >= 0 ? T.green : T.rule }}>{fmtMoney(inv.profit)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", color: inv.balanceDue > 0 ? T.rule : T.green }}>{fmtMoney(inv.balanceDue)}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setModal(inv)} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                    <button onClick={() => setConfirmDel(inv)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!filtered.length && <tr><td colSpan={11} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No invoices found.</td></tr>}
+          </tbody>
+          {!!filtered.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={5} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{totals.qty}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, color: T.rule, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totals.discount)}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totals.total)}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, color: totals.profit >= 0 ? T.green : T.rule, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totals.profit)}</td>
+                <td colSpan={2} style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </Card>
+      {modal && (
+        <InfInvoiceModal T={T} db={db} infStockReport={infStockReport} nextInfSaleInvoiceNo={nextInfSaleInvoiceNo}
+          initialInvoice={modal.invoiceNo ? { invoiceNo: modal.invoiceNo, date: modal.date, customerId: modal.customerId, salesmanId: modal.salesmanId, items: modal.items, cashReceived: modal.cashReceived } : null}
+          onClose={() => setModal(null)}
+          onSave={(invoiceData) => { const invoice = saveInfInvoice(invoiceData); setModal(null); setInvoicePreview(invoice); }} />
+      )}
+      {invoicePreview && <InfInvoicePreviewModal T={T} db={db} invoice={invoicePreview} onClose={() => setInvoicePreview(null)} />}
+      {confirmDel && <ConfirmModal T={T} title="Delete invoice?" message={`This removes all ${confirmDel.items.length} item(s) on invoice ${confirmDel.invoiceNo}, restores stock, and removes any cash payment tied to it.`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteInfInvoice(confirmDel.invoiceNo); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function InfInvoiceModal({ T, db, infStockReport, nextInfSaleInvoiceNo, onClose, onSave, initialInvoice }) {
+  const isEditing = !!initialInvoice;
+  const [date, setDate] = useState(initialInvoice?.date || todayISO());
+  const [customerId, setCustomerId] = useState(initialInvoice?.customerId || db.infCustomers[0]?.id || "");
+  const [salesmanId, setSalesmanId] = useState(initialInvoice?.salesmanId || db.infSalesmen[0]?.id || "");
+  const [items, setItems] = useState(
+    initialInvoice ? initialInvoice.items.map((it) => ({ key: uid("LINE"), productId: it.productId, productName: it.productName, qty: Number(it.qty), tp: Number(it.tp), discount: Number(it.discount || 0) })) : []
+  );
+  const [cashReceived, setCashReceived] = useState(initialInvoice?.cashReceived || 0);
+
+  // Line-item entry (product/qty/tp/discount) before adding to the invoice list below.
+  const [line, setLine] = useState({ productId: db.infProducts[0]?.id || "", qty: 1, tp: 0, discount: 0 });
+  const lineStockRow = infStockReport.find((r) => r.productId === line.productId);
+  useEffect(() => {
+    if (lineStockRow) setLine((prev) => ({ ...prev, tp: Number(lineStockRow.autoTP.toFixed(2)) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [line.productId]);
+
+  const addItem = () => {
+    const prod = db.infProducts.find((p) => p.id === line.productId);
+    if (!prod || !line.qty || !line.tp) return;
+    setItems([...items, {
+      key: uid("LINE"), productId: line.productId, productName: prod.name,
+      qty: Number(line.qty), tp: Number(line.tp), discount: Number(line.discount) || 0,
+    }]);
+    setLine({ productId: db.infProducts[0]?.id || "", qty: 1, tp: 0, discount: 0 });
+  };
+  const removeItem = (key) => setItems(items.filter((it) => it.key !== key));
+
+  const grandTotal = items.reduce((a, it) => a + Math.max(it.qty * it.tp - it.discount, 0), 0);
+  const cash = Math.min(Number(cashReceived) || 0, grandTotal);
+  const balanceDue = Math.max(grandTotal - cash, 0);
+
+  const custLabel = (c) => `${c.name}${c.address ? " — " + c.address : c.mobile ? " — " + c.mobile : ""}`;
+
+  return (
+    <ModalShell T={T} title={isEditing ? "Edit invoice" : "New invoice"} onClose={onClose}>
+      <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 8 }}>Invoice: <span className="lg-mono">{isEditing ? initialInvoice.invoiceNo : nextInfSaleInvoiceNo()}</span></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Date"><input className="lg-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+        <Field T={T} label="Salesman">
+          <select className="lg-input" value={salesmanId} onChange={(e) => setSalesmanId(e.target.value)}>
+            {db.infSalesmen.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field T={T} label="Customer (name — address/mobile, to tell same-name customers apart)">
+        <select className="lg-input" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+          {db.infCustomers.map((c) => <option key={c.id} value={c.id}>{custLabel(c)}</option>)}
+        </select>
+      </Field>
+
+      <div style={{ borderTop: `1px solid ${T.line}`, marginTop: 10, paddingTop: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Add product to this invoice</div>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+          <select className="lg-input" value={line.productId} onChange={(e) => setLine({ ...line, productId: e.target.value })}>
+            {db.infProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <input className="lg-input" type="number" placeholder="Qty" value={line.qty} onChange={(e) => setLine({ ...line, qty: e.target.value })} />
+          <input className="lg-input" type="number" placeholder="TP" value={line.tp} onChange={(e) => setLine({ ...line, tp: e.target.value })} />
+          <input className="lg-input" type="number" placeholder="Discount" value={line.discount} onChange={(e) => setLine({ ...line, discount: e.target.value })} />
+        </div>
+        {lineStockRow && <div style={{ fontSize: 11, color: T.slateLight, marginBottom: 8 }}>In stock: <span className="lg-mono" style={{ color: lineStockRow.remainingQty > 0 ? T.green : T.rule, fontWeight: 600 }}>{lineStockRow.remainingQty}</span></div>}
+        <button type="button" className="lg-btn" style={{ background: T.paper, border: `1px solid ${T.line}`, color: T.ink, width: "100%", marginBottom: 14 }} onClick={addItem} disabled={!line.productId || !line.qty}>
+          <Plus size={14} /> Add product to invoice
+        </button>
+      </div>
+
+      {!!items.length && (
+        <div style={{ marginBottom: 14 }}>
+          <table className="lg-table">
+            <thead><tr><th>Product</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>TP</th><th style={{ textAlign: "right" }}>Disc.</th><th style={{ textAlign: "right" }}>Total</th><th></th></tr></thead>
+            <tbody>
+              {items.map((it) => (
+                <tr key={it.key}>
+                  <td style={{ color: T.ink }}>{it.productName || db.infProducts.find((p) => p.id === it.productId)?.name || "—"}</td>
+                  <td className="lg-mono" style={{ textAlign: "right" }}>{it.qty}</td>
+                  <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(it.tp)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", color: T.rule }}>{fmtMoney(it.discount)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(Math.max(it.qty * it.tp - it.discount, 0))}</td>
+                  <td><button onClick={() => removeItem(it.key)} style={{ background: "transparent", border: "none", cursor: "pointer", color: T.rule }}><X size={14} /></button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0" }}>
+        <span style={{ fontSize: 13, color: T.slate }}>Invoice total</span>
+        <span className="lg-mono" style={{ fontSize: 18, fontWeight: 700 }}>{fmtMoney(grandTotal)}</span>
+      </div>
+
+      <Field T={T} label="Cash received now (leave 0 if fully on credit)">
+        <input className="lg-input" type="number" value={cashReceived} onChange={(e) => setCashReceived(e.target.value)} placeholder="0" />
+      </Field>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "6px 0 14px", padding: "8px 10px", background: hexToRgba(balanceDue > 0 ? T.rule : T.green, 0.1), borderRadius: 8 }}>
+        <span style={{ fontSize: 12.5, color: T.slate }}>{balanceDue > 0 ? "Remaining balance (added to customer due)" : "Fully paid — balance zero"}</span>
+        <span className="lg-mono" style={{ fontSize: 15, fontWeight: 600, color: balanceDue > 0 ? T.rule : T.green }}>{fmtMoney(balanceDue)}</span>
+      </div>
+
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center" }}
+        disabled={!customerId || !salesmanId || !items.length}
+        onClick={() => onSave({ date, customerId, salesmanId, items, cashReceived: cash, editingInvoiceNo: isEditing ? initialInvoice.invoiceNo : undefined })}>
+        {isEditing ? "Update invoice" : "Save invoice"}
+      </button>
+    </ModalShell>
+  );
+}
+
+function InfInvoicePreviewModal({ T, db, invoice, onClose }) {
+  const cust = db.infCustomers.find((c) => c.id === invoice.customerId);
+  const sm = db.infSalesmen.find((s) => s.id === invoice.salesmanId);
+
+  const downloadPDF = async () => {
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const marginX = 40;
+    let y = 50;
+
+    doc.setFontSize(18); doc.setFont(undefined, "bold");
+    doc.text("INFINITY — Invoice", marginX, y);
+    doc.setFontSize(10); doc.setFont(undefined, "normal");
+    y += 22;
+    doc.text(`Invoice: ${invoice.invoiceNo}`, marginX, y);
+    doc.text(`Date: ${fmtDateDMY(invoice.date)}`, 400, y);
+    y += 16;
+    doc.text(`Customer: ${cust ? cust.name : "-"}`, marginX, y);
+    y += 14;
+    if (cust?.address) { doc.text(`Address: ${cust.address}`, marginX, y); y += 14; }
+    if (cust?.mobile) { doc.text(`Mobile: ${cust.mobile}`, marginX, y); y += 14; }
+    doc.text(`Salesman: ${sm ? sm.name : "-"}`, marginX, y);
+    y += 22;
+
+    doc.setFont(undefined, "bold");
+    doc.text("Product", marginX, y);
+    doc.text("Qty", 260, y);
+    doc.text("TP", 320, y);
+    doc.text("Discount", 390, y);
+    doc.text("Total", 480, y);
+    doc.setFont(undefined, "normal");
+    y += 6;
+    doc.line(marginX, y, 555, y);
+    y += 16;
+
+    invoice.items.forEach((it) => {
+      doc.text(String(it.productName), marginX, y);
+      doc.text(String(it.qty), 260, y);
+      doc.text(fmtMoney(it.tp), 320, y);
+      doc.text(fmtMoney(it.discount), 390, y);
+      doc.text(fmtMoney(it.total), 480, y);
+      y += 18;
+    });
+
+    y += 6;
+    doc.line(marginX, y, 555, y);
+    y += 20;
+    doc.setFont(undefined, "bold");
+    doc.text(`Invoice total: ${fmtMoney(invoice.grandTotal)}`, 350, y); y += 16;
+    doc.setFont(undefined, "normal");
+    doc.text(`Cash received: ${fmtMoney(invoice.cashReceived)}`, 350, y); y += 16;
+    doc.setFont(undefined, "bold");
+    doc.text(`Balance due: ${fmtMoney(invoice.balanceDue)}`, 350, y);
+
+    doc.save(`invoice-${invoice.invoiceNo}.pdf`);
+  };
+
+  return (
+    <ModalShell T={T} title={`Invoice ${invoice.invoiceNo}`} onClose={onClose}>
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontWeight: 600 }}>{cust ? cust.name : "—"}</div>
+        <div style={{ fontSize: 12, color: T.slate }}>{cust?.address || cust?.mobile || ""}</div>
+        <div style={{ fontSize: 12, color: T.slateLight, marginTop: 2 }}>Salesman: {sm ? sm.name : "—"} · Date: {fmtDateDMY(invoice.date)}</div>
+      </div>
+      <table className="lg-table" style={{ marginBottom: 12 }}>
+        <thead><tr><th>Product</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>TP</th><th style={{ textAlign: "right" }}>Total</th></tr></thead>
+        <tbody>
+          {invoice.items.map((it) => (
+            <tr key={it.id}>
+              <td style={{ color: T.ink }}>{it.productName || "—"}</td>
+              <td className="lg-mono" style={{ textAlign: "right" }}>{it.qty}</td>
+              <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(it.tp)}</td>
+              <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(it.total)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ borderTop: `1px solid ${T.line}`, paddingTop: 10, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}><span>Invoice total</span><span className="lg-mono" style={{ fontWeight: 700 }}>{fmtMoney(invoice.grandTotal)}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4, color: T.green }}><span>Cash received</span><span className="lg-mono" style={{ fontWeight: 600 }}>{fmtMoney(invoice.cashReceived)}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, fontWeight: 700, color: invoice.balanceDue > 0 ? T.rule : T.green }}><span>Balance due</span><span className="lg-mono">{fmtMoney(invoice.balanceDue)}</span></div>
+      </div>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center" }} onClick={downloadPDF}>
+        <Download size={14} /> Download PDF
+      </button>
+    </ModalShell>
+  );
+}
+
+function InfPaymentsPage({ T, db, saveInfPayment, deleteInfPayment }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [q, setQ] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const rows = [...db.infPayments].sort((a, b) => (b.date || "").localeCompare(a.date || "")).filter((p) => {
+    const cust = db.infCustomers.find((c) => c.id === p.customerId);
+    const matchQ = !q || (cust && cust.name.toLowerCase().includes(q.toLowerCase()));
+    const matchFrom = !from || p.date >= from;
+    const matchTo = !to || p.date <= to;
+    return matchQ && matchFrom && matchTo;
+  });
+  const totalAmount = rows.reduce((a, p) => a + Number(p.amount), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "infinity-cash-receiving.pdf", title: "INFINITY — Cash Receiving Report",
+    columns: [
+      { header: "Date", key: "date" }, { header: "Customer", key: "customer" },
+      { header: "Amount", key: "amount", align: "right" }, { header: "Method", key: "method" }, { header: "Reference", key: "reference" },
+    ],
+    rows: rows.map((p) => {
+      const cust = db.infCustomers.find((c) => c.id === p.customerId);
+      return { date: fmtDateDMY(p.date), customer: cust ? cust.name : "—", amount: fmtMoney(p.amount), method: p.method, reference: p.reference || "—" };
+    }),
+    totalsRow: { date: "Total", amount: fmtMoney(totalAmount) },
+  });
+  return (
+    <div>
+      <PageHeader T={T} title="Cash receiving" subtitle="Money received from a INFINITY customer"
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})} disabled={!db.infCustomers.length}><Plus size={14} /> New payment</button></div>} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search customer" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <input className="lg-input" style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <input className="lg-input" style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Date</th><th>Customer</th><th>Amount</th><th>Method</th><th>Reference</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((p) => {
+              const cust = db.infCustomers.find((c) => c.id === p.customerId);
+              return (
+                <tr key={p.id}>
+                  <td className="lg-mono">{fmtDateDMY(p.date)}</td>
+                  <td>{cust ? cust.name : "—"}</td>
+                  <td className="lg-mono" style={{ color: T.green, fontWeight: 600 }}>{fmtMoney(p.amount)}</td>
+                  <td>{p.method}</td>
+                  <td className="lg-mono">{p.reference || "—"}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setConfirmDel(p)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && <tr><td colSpan={6} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No payments recorded yet.</td></tr>}
+          </tbody>
+          {!!rows.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={2} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ fontWeight: 700, color: T.green, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalAmount)}</td>
+                <td colSpan={3} style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </Card>
+      {modal && (
+        <ModalShell T={T} title="New payment" onClose={() => setModal(null)}>
+          <InfPaymentForm T={T} db={db} onSave={(d) => { saveInfPayment(d); setModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && <ConfirmModal T={T} title="Delete payment?" message="This will increase the customer's due balance." onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteInfPayment(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function InfPaymentForm({ T, db, onSave }) {
+  const [f, setF] = useState({ date: todayISO(), customerId: db.infCustomers[0]?.id || "", amount: 0, method: "Cash", reference: "", remarks: "" });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <>
+      <Field T={T} label="Date"><input className="lg-input" type="date" value={f.date} onChange={set("date")} /></Field>
+      <Field T={T} label="Customer">
+        <select className="lg-input" value={f.customerId} onChange={set("customerId")}>
+          {db.infCustomers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Amount"><input className="lg-input" type="number" value={f.amount} onChange={set("amount")} /></Field>
+        <Field T={T} label="Method">
+          <select className="lg-input" value={f.method} onChange={set("method")}><option>Cash</option><option>Bank</option><option>Mobile Banking</option><option>Cheque</option></select>
+        </Field>
+      </div>
+      <Field T={T} label="Reference"><input className="lg-input" value={f.reference} onChange={set("reference")} /></Field>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!f.customerId || !f.amount} onClick={() => onSave({ ...f, amount: Number(f.amount) })}>Save payment</button>
+    </>
+  );
+}
+
+function InfSupplierPaymentsPage({ T, db, saveInfSupplierPayment, deleteInfSupplierPayment }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [q, setQ] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const rows = [...db.infSupplierPayments].sort((a, b) => (b.date || "").localeCompare(a.date || "")).filter((p) => {
+    const sup = db.infSuppliers.find((s) => s.id === p.supplierId);
+    const matchQ = !q || (sup && sup.name.toLowerCase().includes(q.toLowerCase()));
+    const matchFrom = !from || p.date >= from;
+    const matchTo = !to || p.date <= to;
+    return matchQ && matchFrom && matchTo;
+  });
+  const totalAmount = rows.reduce((a, p) => a + Number(p.amount), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "infinity-supplier-payments.pdf", title: "INFINITY — Supplier Payments Report",
+    columns: [
+      { header: "Date", key: "date" }, { header: "Supplier", key: "supplier" },
+      { header: "Amount", key: "amount", align: "right" }, { header: "Method", key: "method" }, { header: "Reference", key: "reference" },
+    ],
+    rows: rows.map((p) => {
+      const sup = db.infSuppliers.find((s) => s.id === p.supplierId);
+      return { date: fmtDateDMY(p.date), supplier: sup ? sup.name : "—", amount: fmtMoney(p.amount), method: p.method, reference: p.reference || "—" };
+    }),
+    totalsRow: { date: "Total", amount: fmtMoney(totalAmount) },
+  });
+  return (
+    <div>
+      <PageHeader T={T} title="Payments to suppliers" subtitle="Money paid out to a INFINITY supplier"
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})} disabled={!db.infSuppliers.length}><Plus size={14} /> New payment</button></div>} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search supplier" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <input className="lg-input" style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <input className="lg-input" style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Date</th><th>Supplier</th><th>Amount</th><th>Method</th><th>Reference</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((p) => {
+              const sup = db.infSuppliers.find((s) => s.id === p.supplierId);
+              return (
+                <tr key={p.id}>
+                  <td className="lg-mono">{fmtDateDMY(p.date)}</td>
+                  <td>{sup ? sup.name : "—"}</td>
+                  <td className="lg-mono" style={{ color: T.rule, fontWeight: 600 }}>{fmtMoney(p.amount)}</td>
+                  <td>{p.method}</td>
+                  <td className="lg-mono">{p.reference || "—"}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setConfirmDel(p)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && <tr><td colSpan={6} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No payments recorded yet.</td></tr>}
+          </tbody>
+          {!!rows.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={2} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ fontWeight: 700, color: T.rule, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalAmount)}</td>
+                <td colSpan={3} style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </Card>
+      {modal && (
+        <ModalShell T={T} title="New payment to supplier" onClose={() => setModal(null)}>
+          <InfSupplierPaymentForm T={T} db={db} onSave={(d) => { saveInfSupplierPayment(d); setModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && <ConfirmModal T={T} title="Delete payment?" message="This will increase the amount owed to this supplier." onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteInfSupplierPayment(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function InfSupplierPaymentForm({ T, db, onSave }) {
+  const [f, setF] = useState({ date: todayISO(), supplierId: db.infSuppliers[0]?.id || "", amount: 0, method: "Cash", reference: "", remarks: "" });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <>
+      <Field T={T} label="Date"><input className="lg-input" type="date" value={f.date} onChange={set("date")} /></Field>
+      <Field T={T} label="Supplier">
+        <select className="lg-input" value={f.supplierId} onChange={set("supplierId")}>
+          {db.infSuppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Amount"><input className="lg-input" type="number" value={f.amount} onChange={set("amount")} /></Field>
+        <Field T={T} label="Method">
+          <select className="lg-input" value={f.method} onChange={set("method")}><option>Cash</option><option>Bank</option><option>Mobile Banking</option><option>Cheque</option></select>
+        </Field>
+      </div>
+      <Field T={T} label="Reference"><input className="lg-input" value={f.reference} onChange={set("reference")} /></Field>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!f.supplierId || !f.amount} onClick={() => onSave({ ...f, amount: Number(f.amount) })}>Save payment</button>
+    </>
+  );
+}
+
+function InfSettingsPage({ T, db, saveInfSettings }) {
+  const [openingCash, setOpeningCash] = useState(db.infSettings.openingCash);
+  const [marginPercent, setMarginPercent] = useState(db.infSettings.marginPercent ?? "");
+  const notSetYet = db.infSettings.marginPercent === null || db.infSettings.marginPercent === undefined || db.infSettings.marginPercent === "";
+  const exportPDF = () => downloadPDFTable({
+    filename: "infinity-settings-snapshot.pdf", title: "INFINITY — Settings Snapshot",
+    columns: [{ header: "Setting", key: "label" }, { header: "Value", key: "value", align: "right" }],
+    rows: [
+      { label: "Opening cash balance", value: fmtMoney(db.infSettings.openingCash) },
+      { label: "Default margin %", value: notSetYet ? "Not set" : `${db.infSettings.marginPercent}%` },
+      { label: "Purchase invoice sequence", value: String(db.infSettings.purchaseInvoiceSeq) },
+      { label: "Sale invoice sequence", value: String(db.infSettings.saleInvoiceSeq) },
+    ],
+  });
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+        <button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button>
+      </div>
+      <Card T={T} style={{ maxWidth: 420 }}>
+        <Field T={T} label="INFINITY opening cash balance"><input className="lg-input" type="number" value={openingCash} onChange={(e) => setOpeningCash(e.target.value)} /></Field>
+        <Field T={T} label="Default margin % (used to auto-suggest TP from DP) — set this yourself, no default">
+          <input className="lg-input" type="number" placeholder="e.g. 40" value={marginPercent} onChange={(e) => setMarginPercent(e.target.value)} />
+        </Field>
+        {notSetYet && (
+          <div style={{ fontSize: 11.5, color: T.rule, marginBottom: 12, marginTop: -6, fontWeight: 600 }}>
+            এখনো সেট করা হয়নি — এখন TP = DP (কোনো margin ছাড়াই) দেখাচ্ছে, যতক্ষণ না তুমি এখানে একটা % দিয়ে Save করছো।
+          </div>
+        )}
+        <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 12, marginTop: notSetYet ? 0 : -6 }}>
+          এই % দিয়ে Stock Report আর Sales entry-তে TP (বিক্রয়মূল্য) অটোমেটিক suggest হয় (DP + এই %) — এটা শুধু একটা suggestion, প্রতিটা বিক্রির সময় চাইলে TP নিজে বদলে দিতে পারবে।
+        </div>
+        <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+          disabled={marginPercent === ""} onClick={() => saveInfSettings({ openingCash: Number(openingCash), marginPercent: Number(marginPercent) })}>Save</button>
+      </Card>
+      <div style={{ fontSize: 12, color: T.slateLight, marginTop: 14, maxWidth: 420 }}>
+        INFINITY has its own customers, suppliers, products and cash — completely separate from the main ARHAM TRADERS ledger. Its cash-in-hand also appears as a card on the main Dashboard.
+      </div>
+    </div>
+  );
+}
+
+// ================= CTG MODULE =================
+const CTG_SUBTABS = [
+  { key: "dashboard", label: "Dashboard" },
+  { key: "stock", label: "Stock Report" },
+  { key: "purchase", label: "Purchase" },
+  { key: "sales", label: "Sales" },
+  { key: "salesmen", label: "Salesmen" },
+  { key: "customers", label: "Customers" },
+  { key: "suppliers", label: "Suppliers" },
+  { key: "payments", label: "Cash Receiving" },
+  { key: "supplierPayments", label: "Supplier Payments" },
+  { key: "settings", label: "Settings" },
+];
+
+function CtgPage(props) {
+  const { T } = props;
+  const [sub, setSub] = useState("dashboard");
+  return (
+    <div>
+      <PageHeader T={T} title="CTG" subtitle="A separate product line — its own stock, purchases, sales and salesmen" />
+      <div style={{ display: "flex", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
+        {CTG_SUBTABS.map((t) => (
+          <button key={t.key} onClick={() => setSub(t.key)} className="lg-btn"
+            style={{
+              background: sub === t.key ? T.buttonFill : "transparent", color: sub === t.key ? "#fff" : T.slate,
+              border: `1px solid ${sub === t.key ? T.buttonFill : T.line}`, padding: "7px 14px", fontSize: 12.5,
+            }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {sub === "dashboard" && <CtgDashboard {...props} />}
+      {sub === "stock" && <CtgStockReportPage {...props} />}
+      {sub === "purchase" && <CtgPurchasePage {...props} />}
+      {sub === "sales" && <CtgSalesPage {...props} />}
+      {sub === "salesmen" && <CtgSalesmenPage {...props} />}
+      {sub === "customers" && <CtgCustomersPage {...props} />}
+      {sub === "suppliers" && <CtgSuppliersPage {...props} />}
+      {sub === "payments" && <CtgPaymentsPage {...props} />}
+      {sub === "supplierPayments" && <CtgSupplierPaymentsPage {...props} />}
+      {sub === "settings" && <CtgSettingsPage {...props} />}
+    </div>
+  );
+}
+
+function CtgDashboard({ T, db, ctgTotals, ctgStockReport }) {
+  const totalInStock = ctgStockReport.reduce((a, r) => a + r.remainingQty, 0);
+  const cards = [
+    { label: "Total products", value: db.ctgProducts.length, accent: "#B8912F" },
+    { label: "Total in stock (pcs)", value: totalInStock, accent: "#C1663B" },
+    { label: "Total sales", value: fmtMoney(ctgTotals.totalSales), accent: "#3B6EA5" },
+    { label: "Total collections", value: fmtMoney(ctgTotals.totalCollections), tone: "good", accent: "#2F6B4F" },
+    { label: "Total outstanding (customers)", value: fmtMoney(ctgTotals.totalOutstanding), tone: "danger", accent: "#B23A2E" },
+    { label: "Accounts payable (suppliers)", value: fmtMoney(ctgTotals.totalPayable), tone: ctgTotals.totalPayable > 0 ? "danger" : "", accent: "#8A5A2B" },
+    { label: "Cash in hand", value: fmtMoney(ctgTotals.cashInHand), accent: "#4C5B8A" },
+    { label: "Stock value (at DP)", value: fmtMoney(ctgTotals.totalStockDPValue), accent: "#6B4C9A" },
+    { label: "Stock value (at TP)", value: fmtMoney(ctgTotals.totalStockTPValue), tone: "good", accent: "#2E8B8B" },
+    { label: "Total salesman commission", value: fmtMoney(ctgTotals.totalCommission), accent: "#A34C6B" },
+  ];
+  const exportPDF = () => downloadPDFTable({
+    filename: "ctg-dashboard-summary.pdf", title: "CTG — Dashboard Summary",
+    columns: [{ header: "Metric", key: "label" }, { header: "Value", key: "value", align: "right" }],
+    rows: cards.map((c) => ({ label: c.label, value: String(c.value) })),
+  });
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+        <button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px,1fr))", gap: 12, marginBottom: 20 }}>
+        {cards.map((c) => <StatCard key={c.label} T={T} {...c} />)}
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Product</th><th style={{ textAlign: "right" }}>In stock</th><th style={{ textAlign: "right" }}>Avg DP</th><th style={{ textAlign: "right" }}>Auto TP</th></tr></thead>
+          <tbody>
+            {ctgStockReport.map((r) => (
+              <tr key={r.productId}>
+                <td>{r.productName}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{r.remainingQty}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.avgDP)}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(r.autoTP)}</td>
+              </tr>
+            ))}
+            {!ctgStockReport.length && <tr><td colSpan={4} style={{ textAlign: "center", padding: 20, color: T.slateLight }}>No products yet.</td></tr>}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+function CtgStockReportPage({ T, ctgStockReport, db, saveCtgProduct, deleteCtgProduct }) {
+  const [editModal, setEditModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const totalDP = ctgStockReport.reduce((a, r) => a + r.totalDPValue, 0);
+  const totalTP = ctgStockReport.reduce((a, r) => a + r.totalTPValue, 0);
+  const totalPurchasedQty = ctgStockReport.reduce((a, r) => a + r.totalPurchasedQty, 0);
+  const totalSoldQty = ctgStockReport.reduce((a, r) => a + r.totalSoldQty, 0);
+  const totalInStock = ctgStockReport.reduce((a, r) => a + r.remainingQty, 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "ctg-stock-report.pdf", title: "CTG — Stock Report", subtitle: "TP auto-suggested from DP using the margin % set in Settings",
+    columns: [
+      { header: "Product", key: "product" }, { header: "Bought from", key: "suppliers" },
+      { header: "Purchased", key: "purchased", align: "right" }, { header: "Sold", key: "sold", align: "right" }, { header: "In stock", key: "stock", align: "right" },
+      { header: "DP (avg)", key: "dp", align: "right" }, { header: "TP (auto)", key: "tp", align: "right" },
+      { header: "Total DP value", key: "dpValue", align: "right" }, { header: "Total TP value", key: "tpValue", align: "right" },
+    ],
+    rows: ctgStockReport.map((r) => ({
+      product: r.productName, suppliers: r.suppliers.join(", ") || "—", purchased: r.totalPurchasedQty, sold: r.totalSoldQty, stock: r.remainingQty,
+      dp: fmtMoney(r.avgDP), tp: fmtMoney(r.autoTP), dpValue: fmtMoney(r.totalDPValue), tpValue: fmtMoney(r.totalTPValue),
+    })),
+    totalsRow: { product: "Total", purchased: totalPurchasedQty, sold: totalSoldQty, stock: totalInStock, dpValue: fmtMoney(totalDP), tpValue: fmtMoney(totalTP) },
+  });
+  return (
+    <div>
+      <PageHeader T={T} title="Stock report" subtitle="TP is auto-suggested from DP using the margin % set in Settings"
+        action={<button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button>} />
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead>
+            <tr>
+              <th>Product</th><th>Bought from</th>
+              <th style={{ textAlign: "right" }}>Purchased</th><th style={{ textAlign: "right" }}>Sold</th><th style={{ textAlign: "right" }}>In stock</th>
+              <th style={{ textAlign: "right" }}>DP (avg)</th><th style={{ textAlign: "right" }}>TP (auto)</th>
+              <th style={{ textAlign: "right" }}>Total DP value</th><th style={{ textAlign: "right" }}>Total TP value</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {ctgStockReport.map((r) => (
+              <tr key={r.productId}>
+                <td style={{ fontWeight: 600 }}>{r.productName}</td>
+                <td style={{ fontSize: 12, color: T.slateLight }}>{r.suppliers.join(", ") || "—"}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{r.totalPurchasedQty}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{r.totalSoldQty}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, color: r.remainingQty > 0 ? T.green : T.rule }}>{r.remainingQty}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.avgDP)}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.autoTP)}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.totalDPValue)}</td>
+                <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(r.totalTPValue)}</td>
+                <td style={{ whiteSpace: "nowrap" }}>
+                  <button onClick={() => setEditModal(db.ctgProducts.find((p) => p.id === r.productId))} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                  <button onClick={() => setConfirmDel(r)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                </td>
+              </tr>
+            ))}
+            {!ctgStockReport.length && <tr><td colSpan={10} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No products yet — add one from Purchase entry.</td></tr>}
+          </tbody>
+          {!!ctgStockReport.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={2} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{totalPurchasedQty}</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{totalSoldQty}</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right", color: T.green }}>{totalInStock}</td>
+                <td colSpan={2} style={{ borderTop: `2px solid ${T.line}` }}></td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{fmtMoney(totalDP)}</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}`, textAlign: "right" }}>{fmtMoney(totalTP)}</td>
+                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </Card>
+      {editModal && (
+        <ModalShell T={T} title="Edit product name" onClose={() => setEditModal(null)}>
+          <CtgProductRenameForm T={T} product={editModal} onSave={(d) => { saveCtgProduct(d); setEditModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && (
+        <ConfirmModal T={T} title="Delete product?"
+          message={confirmDel.totalPurchasedQty > 0 || confirmDel.totalSoldQty > 0
+            ? `${confirmDel.productName} already has purchase/sale history — deleting it will NOT delete those old entries, but the product name will disappear from new entry forms.`
+            : `Remove ${confirmDel.productName}?`}
+          onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteCtgProduct(confirmDel.productId); setConfirmDel(null); }} />
+      )}
+    </div>
+  );
+}
+
+function CtgProductRenameForm({ T, product, onSave }) {
+  const [name, setName] = useState(product.name);
+  return (
+    <>
+      <Field T={T} label="Product name"><input className="lg-input" value={name} onChange={(e) => setName(e.target.value)} /></Field>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!name} onClick={() => onSave({ ...product, name })}>Save</button>
+    </>
+  );
+}
+
+function CtgCustomersPage({ T, db, saveCtgCustomer, deleteCtgCustomer, ctgCustomerBalance }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const filtered = db.ctgCustomers.filter((c) => {
+    const matchQ = !q || c.name.toLowerCase().includes(q.toLowerCase()) || (c.mobile || "").includes(q);
+    const matchStatus = statusFilter === "All" || c.status === statusFilter;
+    return matchQ && matchStatus;
+  });
+  const totalBalance = filtered.reduce((a, c) => a + ctgCustomerBalance(c.id), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "ctg-customers.pdf", title: "CTG — Customers Report",
+    columns: [
+      { header: "Name", key: "name" }, { header: "Mobile", key: "mobile" }, { header: "Address", key: "address" },
+      { header: "Status", key: "status" }, { header: "Balance", key: "balance", align: "right" },
+    ],
+    rows: filtered.map((c) => ({ name: c.name, mobile: c.mobile || "—", address: c.address || "—", status: c.status, balance: fmtMoney(ctgCustomerBalance(c.id)) })),
+    totalsRow: { name: "Total", balance: fmtMoney(totalBalance) },
+  });
+  return (
+    <div>
+      <PageHeader T={T} title="CTG customers" subtitle={`${db.ctgCustomers.length} total`}
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add customer</button></div>} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search name or mobile" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <select className="lg-input" style={{ width: 140 }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option>All</option><option>Active</option><option>Inactive</option>
+        </select>
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Name</th><th>Mobile</th><th>Status</th><th>Balance</th><th></th></tr></thead>
+          <tbody>
+            {filtered.map((c) => {
+              const bal = ctgCustomerBalance(c.id);
+              return (
+                <tr key={c.id}>
+                  <td style={{ fontWeight: 600 }}>{c.name}</td>
+                  <td className="lg-mono">{c.mobile}</td>
+                  <td><span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: c.status === "Active" ? T.greenBg : T.dangerBg, color: c.status === "Active" ? T.green : T.rule, fontWeight: 600 }}>{c.status}</span></td>
+                  <td className="lg-mono" style={{ color: bal > 0 ? T.rule : T.green, fontWeight: 600 }}>{fmtMoney(bal)}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setModal(c)} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                    <button onClick={() => setConfirmDel(c)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!filtered.length && <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No customers found.</td></tr>}
+          </tbody>
+          {!!filtered.length && (
+            <tfoot><tr>
+              <td colSpan={3} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total balance</td>
+              <td className="lg-mono" style={{ fontWeight: 700, color: totalBalance > 0 ? T.rule : T.green, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalBalance)}</td>
+              <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+            </tr></tfoot>
+          )}
+        </table>
+      </Card>
+      {modal && (
+        <ModalShell T={T} title={modal.id ? "Edit customer" : "Add customer"} onClose={() => setModal(null)}>
+          <CtgPersonForm T={T} initial={modal} onSave={(d) => { saveCtgCustomer(d); setModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && <ConfirmModal T={T} title="Delete customer?" message={`Remove ${confirmDel.name}?`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteCtgCustomer(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function CtgSuppliersPage({ T, db, saveCtgSupplier, deleteCtgSupplier, ctgSupplierBalance }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const filtered = db.ctgSuppliers.filter((s) => {
+    const matchQ = !q || s.name.toLowerCase().includes(q.toLowerCase()) || (s.mobile || "").includes(q);
+    const matchStatus = statusFilter === "All" || s.status === statusFilter;
+    return matchQ && matchStatus;
+  });
+  const totalPayable = filtered.reduce((a, s) => a + ctgSupplierBalance(s.id), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "ctg-suppliers.pdf", title: "CTG — Suppliers Report",
+    columns: [
+      { header: "Name", key: "name" }, { header: "Mobile", key: "mobile" }, { header: "Address", key: "address" },
+      { header: "Status", key: "status" }, { header: "Payable", key: "payable", align: "right" },
+    ],
+    rows: filtered.map((s) => ({ name: s.name, mobile: s.mobile || "—", address: s.address || "—", status: s.status, payable: fmtMoney(ctgSupplierBalance(s.id)) })),
+    totalsRow: { name: "Total", payable: fmtMoney(totalPayable) },
+  });
+  return (
+    <div>
+      <PageHeader T={T} title="CTG suppliers" subtitle={`${db.ctgSuppliers.length} total`}
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add supplier</button></div>} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search name or mobile" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <select className="lg-input" style={{ width: 140 }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option>All</option><option>Active</option><option>Inactive</option>
+        </select>
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Name</th><th>Mobile</th><th>Status</th><th>Payable</th><th></th></tr></thead>
+          <tbody>
+            {filtered.map((s) => {
+              const bal = ctgSupplierBalance(s.id);
+              return (
+                <tr key={s.id}>
+                  <td style={{ fontWeight: 600 }}>{s.name}</td>
+                  <td className="lg-mono">{s.mobile}</td>
+                  <td><span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: s.status === "Active" ? T.greenBg : T.dangerBg, color: s.status === "Active" ? T.green : T.rule, fontWeight: 600 }}>{s.status}</span></td>
+                  <td className="lg-mono" style={{ color: bal > 0 ? T.rule : T.green, fontWeight: 600 }}>{fmtMoney(bal)}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setModal(s)} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                    <button onClick={() => setConfirmDel(s)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!filtered.length && <tr><td colSpan={5} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No suppliers found.</td></tr>}
+          </tbody>
+          {!!filtered.length && (
+            <tfoot><tr>
+              <td colSpan={3} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total payable</td>
+              <td className="lg-mono" style={{ fontWeight: 700, color: totalPayable > 0 ? T.rule : T.green, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalPayable)}</td>
+              <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+            </tr></tfoot>
+          )}
+        </table>
+      </Card>
+      {modal && (
+        <ModalShell T={T} title={modal.id ? "Edit supplier" : "Add supplier"} onClose={() => setModal(null)}>
+          <CtgPersonForm T={T} initial={modal} onSave={(d) => { saveCtgSupplier(d); setModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && <ConfirmModal T={T} title="Delete supplier?" message={`Remove ${confirmDel.name}?`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteCtgSupplier(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function CtgPersonForm({ T, initial, onSave }) {
+  const [f, setF] = useState({
+    id: initial.id, name: initial.name || "", mobile: initial.mobile || "", address: initial.address || "",
+    openingBalance: initial.openingBalance || 0, status: initial.status || "Active",
+  });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <>
+      <Field T={T} label="Name"><input className="lg-input" value={f.name} onChange={set("name")} /></Field>
+      <Field T={T} label="Mobile"><input className="lg-input" value={f.mobile} onChange={set("mobile")} /></Field>
+      <Field T={T} label="Address"><input className="lg-input" value={f.address} onChange={set("address")} /></Field>
+      <Field T={T} label="Opening balance"><input className="lg-input" type="number" value={f.openingBalance} onChange={set("openingBalance")} /></Field>
+      <Field T={T} label="Status">
+        <select className="lg-input" value={f.status} onChange={set("status")}><option>Active</option><option>Inactive</option></select>
+      </Field>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!f.name} onClick={() => onSave(f)}>Save</button>
+    </>
+  );
+}
+
+function CtgSalesmenPage({ T, db, saveCtgSalesman, deleteCtgSalesman, ctgCustomerBalance }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const [q, setQ] = useState("");
+  const filteredSalesmen = db.ctgSalesmen.filter((sm) => !q || sm.name.toLowerCase().includes(q.toLowerCase()) || (sm.mobile || "").includes(q));
+
+  const salesmanStats = (smId) => {
+    const sales = db.ctgSales.filter((s) => s.salesmanId === smId);
+    const sm = db.ctgSalesmen.find((x) => x.id === smId);
+    const pct = sm ? Number(sm.commissionPercent || 0) : 0; // 0 until a commission % is set for this salesman
+    const totalSold = sales.reduce((a, s) => a + Number(s.total), 0);
+    const totalQty = sales.reduce((a, s) => a + Number(s.qty), 0);
+    const totalDiscount = sales.reduce((a, s) => a + Number(s.discount || 0), 0);
+    const commission = totalSold * (pct / 100);
+    const byCustomer = {};
+    sales.forEach((s) => {
+      const cust = db.ctgCustomers.find((c) => c.id === s.customerId);
+      const name = cust ? cust.name : "—";
+      if (!byCustomer[name]) byCustomer[name] = { qty: 0, total: 0, discount: 0, customerId: s.customerId };
+      byCustomer[name].qty += Number(s.qty);
+      byCustomer[name].total += Number(s.total);
+      byCustomer[name].discount += Number(s.discount || 0);
+    });
+    return { totalSold, totalQty, totalDiscount, commission, byCustomer };
+  };
+
+  const exportPDF = () => downloadPDFTable({
+    filename: "ctg-salesmen.pdf", title: "CTG — Salesmen Report",
+    columns: [
+      { header: "Salesman", key: "name" }, { header: "Commission %", key: "pct", align: "right" },
+      { header: "Qty sold", key: "qty", align: "right" }, { header: "Discount given", key: "discount", align: "right" },
+      { header: "Total sales", key: "total", align: "right" }, { header: "Commission earned", key: "commission", align: "right" },
+    ],
+    rows: filteredSalesmen.map((sm) => {
+      const st = salesmanStats(sm.id);
+      return { name: sm.name, pct: sm.commissionPercent ? `${sm.commissionPercent}%` : "Not set", qty: st.totalQty, discount: fmtMoney(st.totalDiscount), total: fmtMoney(st.totalSold), commission: fmtMoney(st.commission) };
+    }),
+  });
+
+  return (
+    <div>
+      <PageHeader T={T} title="Salesmen" subtitle="Sales, discounts given, and commission per salesman"
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})}><Plus size={14} /> Add salesman</button></div>} />
+      <div style={{ position: "relative", maxWidth: 280, marginBottom: 14 }}>
+        <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+        <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search name or mobile" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {filteredSalesmen.map((sm) => {
+          const stats = salesmanStats(sm.id);
+          const isOpen = expanded === sm.id;
+          return (
+            <Card key={sm.id} T={T} style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 14, cursor: "pointer" }} onClick={() => setExpanded(isOpen ? null : sm.id)}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{sm.name}</div>
+                  <div style={{ fontSize: 12, color: T.slateLight }}>{sm.mobile} · Commission: {sm.commissionPercent ? `${sm.commissionPercent}%` : <span style={{ color: T.rule }}>Not set</span>}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 11, color: T.slate }}>Total sold</div>
+                    <div className="lg-mono" style={{ fontWeight: 700 }}>{fmtMoney(stats.totalSold)}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 11, color: T.slate }}>Commission</div>
+                    <div className="lg-mono" style={{ fontWeight: 700, color: T.green }}>{fmtMoney(stats.commission)}</div>
+                  </div>
+                  <button onClick={(e) => { e.stopPropagation(); setModal(sm); }} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); setConfirmDel(sm); }} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                </div>
+              </div>
+              {isOpen && (
+                <div style={{ borderTop: `1px solid ${T.line}`, padding: "0 14px 14px" }}>
+                  <table className="lg-table">
+                    <thead><tr><th>Customer</th><th style={{ textAlign: "right" }}>Qty sold</th><th style={{ textAlign: "right" }}>Discount given</th><th style={{ textAlign: "right" }}>Sales value</th><th style={{ textAlign: "right" }}>Customer due</th></tr></thead>
+                    <tbody>
+                      {Object.entries(stats.byCustomer).map(([name, v]) => (
+                        <tr key={name}>
+                          <td>{name}</td>
+                          <td className="lg-mono" style={{ textAlign: "right" }}>{v.qty}</td>
+                          <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(v.discount)}</td>
+                          <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(v.total)}</td>
+                          <td className="lg-mono" style={{ textAlign: "right", color: T.rule }}>{fmtMoney(ctgCustomerBalance(v.customerId))}</td>
+                        </tr>
+                      ))}
+                      {!Object.keys(stats.byCustomer).length && <tr><td colSpan={5} style={{ textAlign: "center", padding: 14, color: T.slateLight }}>No sales yet.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          );
+        })}
+        {!filteredSalesmen.length && <div style={{ textAlign: "center", padding: 30, color: T.slateLight }}>No salesmen found.</div>}
+      </div>
+      {modal && <CtgSalesmanModal T={T} initial={modal} onClose={() => setModal(null)} onSave={(d) => { saveCtgSalesman(d); setModal(null); }} />}
+      {confirmDel && <ConfirmModal T={T} title="Delete salesman?" message={`Remove ${confirmDel.name}?`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteCtgSalesman(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function CtgSalesmanModal({ T, initial, onClose, onSave }) {
+  const [f, setF] = useState({
+    id: initial.id, name: initial.name || "", mobile: initial.mobile || "",
+    commissionPercent: initial.commissionPercent ?? "", status: initial.status || "Active",
+  });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <ModalShell T={T} title={initial.id ? "Edit salesman" : "Add salesman"} onClose={onClose}>
+      <Field T={T} label="Name"><input className="lg-input" value={f.name} onChange={set("name")} /></Field>
+      <Field T={T} label="Mobile"><input className="lg-input" value={f.mobile} onChange={set("mobile")} /></Field>
+      <Field T={T} label="Commission % (on total sales value) — set this yourself, no default"><input className="lg-input" type="number" placeholder="e.g. 10" value={f.commissionPercent} onChange={set("commissionPercent")} /></Field>
+      <Field T={T} label="Status">
+        <select className="lg-input" value={f.status} onChange={set("status")}><option>Active</option><option>Inactive</option></select>
+      </Field>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!f.name || f.commissionPercent === ""} onClick={() => onSave({ ...f, commissionPercent: Number(f.commissionPercent) })}>Save salesman</button>
+    </ModalShell>
+  );
+}
+
+function CtgPurchasePage({ T, db, saveCtgPurchase, deleteCtgPurchase, saveCtgProduct, nextCtgPurchaseInvoiceNo }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [q, setQ] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const rows = [...db.ctgPurchases].sort((a, b) => (b.date || "").localeCompare(a.date || "")).filter((p) => {
+    const sup = db.ctgSuppliers.find((s) => s.id === p.supplierId);
+    const matchQ = !q || p.productName.toLowerCase().includes(q.toLowerCase()) || (sup && sup.name.toLowerCase().includes(q.toLowerCase()));
+    const matchFrom = !from || p.date >= from;
+    const matchTo = !to || p.date <= to;
+    return matchQ && matchFrom && matchTo;
+  });
+  const totalQty = rows.reduce((a, p) => a + Number(p.qty), 0);
+  const totalValue = rows.reduce((a, p) => a + Number(p.qty) * Number(p.dp), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "ctg-purchases.pdf", title: "CTG — Purchase Report",
+    columns: [
+      { header: "Invoice", key: "invoice" }, { header: "Date", key: "date" }, { header: "Supplier", key: "supplier" }, { header: "Product", key: "product" },
+      { header: "Qty", key: "qty", align: "right" }, { header: "DP", key: "dp", align: "right" }, { header: "Total", key: "total", align: "right" },
+    ],
+    rows: rows.map((p) => {
+      const sup = db.ctgSuppliers.find((s) => s.id === p.supplierId);
+      return { invoice: p.invoiceNo, date: fmtDateDMY(p.date), supplier: sup ? sup.name : "—", product: p.productName, qty: p.qty, dp: fmtMoney(p.dp), total: fmtMoney(Number(p.qty) * Number(p.dp)) };
+    }),
+    totalsRow: { invoice: "Total", qty: totalQty, total: fmtMoney(totalValue) },
+  });
+  return (
+    <div>
+      <PageHeader T={T} title="Purchase entry" subtitle="Buying stock from a supplier at DP (Dealer Price) — this adds to stock"
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})} disabled={!db.ctgSuppliers.length}><Plus size={14} /> New purchase</button></div>} />
+      {!db.ctgSuppliers.length && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a CTG supplier first (Suppliers tab).</div>}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search product or supplier" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <input className="lg-input" style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <input className="lg-input" style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Invoice</th><th>Date</th><th>Supplier</th><th>Product</th><th>Qty</th><th>DP</th><th>Total</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((p) => {
+              const sup = db.ctgSuppliers.find((s) => s.id === p.supplierId);
+              return (
+                <tr key={p.id}>
+                  <td className="lg-mono">{p.invoiceNo}</td>
+                  <td className="lg-mono">{fmtDateDMY(p.date)}</td>
+                  <td>{sup ? sup.name : "—"}</td>
+                  <td>{p.productName}</td>
+                  <td className="lg-mono">{p.qty}</td>
+                  <td className="lg-mono">{fmtMoney(p.dp)}</td>
+                  <td className="lg-mono" style={{ fontWeight: 600 }}>{fmtMoney(Number(p.qty) * Number(p.dp))}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setConfirmDel(p)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && <tr><td colSpan={8} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No purchases recorded yet.</td></tr>}
+          </tbody>
+          {!!rows.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={4} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{totalQty}</td>
+                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+                <td className="lg-mono" style={{ fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalValue)}</td>
+                <td style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </Card>
+      {modal && <CtgPurchaseModal T={T} db={db} nextCtgPurchaseInvoiceNo={nextCtgPurchaseInvoiceNo} onClose={() => setModal(null)} onSave={(d, newProduct) => { saveCtgPurchase(d, newProduct); setModal(null); }} />}
+      {confirmDel && <ConfirmModal T={T} title="Delete purchase?" message="This will reduce stock and the amount owed to this supplier." onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteCtgPurchase(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function CtgPurchaseModal({ T, db, nextCtgPurchaseInvoiceNo, onClose, onSave }) {
+  const [productMode, setProductMode] = useState(db.ctgProducts.length ? "existing" : "new");
+  const [f, setF] = useState({
+    date: todayISO(), supplierId: db.ctgSuppliers[0]?.id || "", productId: db.ctgProducts[0]?.id || "",
+    newProductName: "", qty: 1, dp: 0, remarks: "",
+  });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const total = (Number(f.qty) || 0) * (Number(f.dp) || 0);
+
+  const save = () => {
+    let productId = f.productId;
+    let productName = db.ctgProducts.find((p) => p.id === productId)?.name || "";
+    let newProduct = null;
+    if (productMode === "new") {
+      productId = uid("CTGPRD");
+      productName = f.newProductName;
+      newProduct = { id: productId, name: productName, status: "Active" };
+    }
+    onSave({ date: f.date, supplierId: f.supplierId, productId, productName, qty: Number(f.qty), dp: Number(f.dp), remarks: f.remarks }, newProduct);
+  };
+
+  return (
+    <ModalShell T={T} title="New purchase entry" onClose={onClose}>
+      <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 8 }}>Invoice: <span className="lg-mono">{nextCtgPurchaseInvoiceNo()}</span></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Date"><input className="lg-input" type="date" value={f.date} onChange={set("date")} /></Field>
+        <Field T={T} label="Supplier">
+          <select className="lg-input" value={f.supplierId} onChange={set("supplierId")}>
+            {db.ctgSuppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field T={T} label="Product">
+        <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+          <button type="button" className="lg-btn" onClick={() => setProductMode("existing")} style={{ background: productMode === "existing" ? T.buttonFill : "transparent", color: productMode === "existing" ? "#fff" : T.slate, border: `1px solid ${T.line}`, fontSize: 12 }}>Existing product</button>
+          <button type="button" className="lg-btn" onClick={() => setProductMode("new")} style={{ background: productMode === "new" ? T.buttonFill : "transparent", color: productMode === "new" ? "#fff" : T.slate, border: `1px solid ${T.line}`, fontSize: 12 }}>New product</button>
+        </div>
+        {productMode === "existing" ? (
+          <select className="lg-input" value={f.productId} onChange={set("productId")}>
+            {db.ctgProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        ) : (
+          <input className="lg-input" placeholder="New product name" value={f.newProductName} onChange={set("newProductName")} />
+        )}
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Quantity"><input className="lg-input" type="number" value={f.qty} onChange={set("qty")} /></Field>
+        <Field T={T} label="DP (purchase price / unit)"><input className="lg-input" type="number" value={f.dp} onChange={set("dp")} /></Field>
+      </div>
+      <Field T={T} label="Remarks"><input className="lg-input" value={f.remarks} onChange={set("remarks")} /></Field>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0" }}>
+        <span style={{ fontSize: 13, color: T.slate }}>Total (added to payable)</span>
+        <span className="lg-mono" style={{ fontSize: 18, fontWeight: 600 }}>{fmtMoney(total)}</span>
+      </div>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center" }}
+        disabled={!f.supplierId || (productMode === "existing" ? !f.productId : !f.newProductName)}
+        onClick={save}>Save purchase</button>
+    </ModalShell>
+  );
+}
+
+function CtgSalesPage({ T, db, deleteCtgInvoice, saveCtgInvoice, ctgStockReport, nextCtgSaleInvoiceNo }) {
+  const [modal, setModal] = useState(null); // {} for new, invoice object for edit, null closed
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [invoicePreview, setInvoicePreview] = useState(null);
+  const [q, setQ] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [salesmanFilter, setSalesmanFilter] = useState("All");
+
+  // DP (cost) isn't stored on each sale line — it's looked up from the product's current
+  // average purchase price (Stock Report), same weighted-average method used there.
+  const withProfit = (s) => {
+    const stockRow = ctgStockReport.find((r) => r.productId === s.productId);
+    const dpUnit = stockRow ? stockRow.avgDP : 0;
+    const dpCost = dpUnit * Number(s.qty);
+    return { ...s, dpUnit, dpCost, profit: Number(s.total) - dpCost };
+  };
+
+  // Group every sale line item by its shared invoice number into one invoice per row.
+  const invoiceMap = {};
+  db.ctgSales.forEach((s) => {
+    if (!invoiceMap[s.invoiceNo]) invoiceMap[s.invoiceNo] = { invoiceNo: s.invoiceNo, date: s.date, customerId: s.customerId, salesmanId: s.salesmanId, items: [] };
+    invoiceMap[s.invoiceNo].items.push(withProfit(s));
+  });
+  const invoices = Object.values(invoiceMap).map((inv) => {
+    const qty = inv.items.reduce((a, it) => a + Number(it.qty), 0);
+    const discount = inv.items.reduce((a, it) => a + Number(it.discount || 0), 0);
+    const total = inv.items.reduce((a, it) => a + Number(it.total), 0);
+    const profit = inv.items.reduce((a, it) => a + it.profit, 0);
+    const cashReceived = db.ctgPayments.filter((p) => p.reference === inv.invoiceNo && p.remarks === "Cash received at sale").reduce((a, p) => a + Number(p.amount), 0);
+    return { ...inv, qty, discount, total, profit, cashReceived, balanceDue: Math.max(total - cashReceived, 0) };
+  }).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
+  const filtered = invoices.filter((inv) => {
+    const cust = db.ctgCustomers.find((c) => c.id === inv.customerId);
+    const matchQ = !q || inv.items.some((it) => it.productName.toLowerCase().includes(q.toLowerCase())) || (cust && cust.name.toLowerCase().includes(q.toLowerCase()));
+    const matchFrom = !from || inv.date >= from;
+    const matchTo = !to || inv.date <= to;
+    const matchSalesman = salesmanFilter === "All" || inv.salesmanId === salesmanFilter;
+    return matchQ && matchFrom && matchTo && matchSalesman;
+  });
+
+  const totals = filtered.reduce((a, inv) => ({
+    qty: a.qty + inv.qty, discount: a.discount + inv.discount, total: a.total + inv.total, profit: a.profit + inv.profit,
+  }), { qty: 0, discount: 0, total: 0, profit: 0 });
+
+  const exportPDF = () => downloadPDFTable({
+    filename: "ctg-sales.pdf", title: "CTG — Sales Report (by invoice)",
+    columns: [
+      { header: "Invoice", key: "invoice" }, { header: "Date", key: "date" }, { header: "Customer", key: "customer" }, { header: "Salesman", key: "salesman" }, { header: "Items", key: "items" },
+      { header: "Qty", key: "qty", align: "right" }, { header: "Discount", key: "discount", align: "right" }, { header: "Total", key: "total", align: "right" }, { header: "Profit", key: "profit", align: "right" },
+    ],
+    rows: filtered.map((inv) => {
+      const cust = db.ctgCustomers.find((c) => c.id === inv.customerId);
+      const sm = db.ctgSalesmen.find((x) => x.id === inv.salesmanId);
+      return {
+        invoice: inv.invoiceNo, date: fmtDateDMY(inv.date), customer: cust ? cust.name : "—", salesman: sm ? sm.name : "—",
+        items: inv.items.map((it) => it.productName).join(", "), qty: inv.qty, discount: fmtMoney(inv.discount), total: fmtMoney(inv.total), profit: fmtMoney(inv.profit),
+      };
+    }),
+    totalsRow: { invoice: "Total", qty: totals.qty, discount: fmtMoney(totals.discount), total: fmtMoney(totals.total), profit: fmtMoney(totals.profit) },
+  });
+
+  const openPreview = (inv) => setInvoicePreview({
+    invoiceNo: inv.invoiceNo, date: inv.date, customerId: inv.customerId, salesmanId: inv.salesmanId,
+    items: inv.items, grandTotal: inv.total, cashReceived: inv.cashReceived, balanceDue: inv.balanceDue,
+  });
+
+  return (
+    <div>
+      <PageHeader T={T} title="Sales entry" subtitle="One invoice per customer — add several products, take cash payment, and download a PDF"
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})} disabled={!db.ctgCustomers.length || !db.ctgProducts.length}><Plus size={14} /> New invoice</button></div>} />
+      {(!db.ctgCustomers.length || !db.ctgProducts.length) && <div style={{ fontSize: 12.5, color: T.slateLight, marginBottom: 12 }}>Add a customer and at least one product (via Purchase entry) first.</div>}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search product or customer" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <select className="lg-input" style={{ width: 160 }} value={salesmanFilter} onChange={(e) => setSalesmanFilter(e.target.value)}>
+          <option value="All">All salesmen</option>
+          {db.ctgSalesmen.map((sm) => <option key={sm.id} value={sm.id}>{sm.name}</option>)}
+        </select>
+        <input className="lg-input" style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <input className="lg-input" style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Salesman</th><th>Items</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>Discount</th><th style={{ textAlign: "right" }}>Total</th><th style={{ textAlign: "right" }}>Profit</th><th style={{ textAlign: "right" }}>Balance</th><th></th></tr></thead>
+          <tbody>
+            {filtered.map((inv) => {
+              const cust = db.ctgCustomers.find((c) => c.id === inv.customerId);
+              const sm = db.ctgSalesmen.find((x) => x.id === inv.salesmanId);
+              return (
+                <tr key={inv.invoiceNo}>
+                  <td>
+                    <button onClick={() => openPreview(inv)} className="lg-mono" style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0, fontWeight: 600, color: T.ink, textDecoration: "underline", textDecorationColor: T.line, fontSize: 12.5 }}>
+                      {inv.invoiceNo}
+                    </button>
+                  </td>
+                  <td className="lg-mono">{fmtDateDMY(inv.date)}</td>
+                  <td>{cust ? cust.name : "—"}</td>
+                  <td>{sm ? sm.name : "—"}</td>
+                  <td style={{ fontSize: 12, color: T.slateLight, maxWidth: 180 }}>{inv.items.map((it) => it.productName).join(", ")}</td>
+                  <td className="lg-mono" style={{ textAlign: "right" }}>{inv.qty}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", color: T.rule }}>{fmtMoney(inv.discount)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(inv.total)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600, color: inv.profit >= 0 ? T.green : T.rule }}>{fmtMoney(inv.profit)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", color: inv.balanceDue > 0 ? T.rule : T.green }}>{fmtMoney(inv.balanceDue)}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setModal(inv)} className="lg-btn" style={{ background: "transparent", color: T.slate, padding: 6 }}><Pencil size={14} /></button>
+                    <button onClick={() => setConfirmDel(inv)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!filtered.length && <tr><td colSpan={11} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No invoices found.</td></tr>}
+          </tbody>
+          {!!filtered.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={5} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{totals.qty}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, color: T.rule, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totals.discount)}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totals.total)}</td>
+                <td className="lg-mono" style={{ textAlign: "right", fontWeight: 700, color: totals.profit >= 0 ? T.green : T.rule, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totals.profit)}</td>
+                <td colSpan={2} style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </Card>
+      {modal && (
+        <CtgInvoiceModal T={T} db={db} ctgStockReport={ctgStockReport} nextCtgSaleInvoiceNo={nextCtgSaleInvoiceNo}
+          initialInvoice={modal.invoiceNo ? { invoiceNo: modal.invoiceNo, date: modal.date, customerId: modal.customerId, salesmanId: modal.salesmanId, items: modal.items, cashReceived: modal.cashReceived } : null}
+          onClose={() => setModal(null)}
+          onSave={(invoiceData) => { const invoice = saveCtgInvoice(invoiceData); setModal(null); setInvoicePreview(invoice); }} />
+      )}
+      {invoicePreview && <CtgInvoicePreviewModal T={T} db={db} invoice={invoicePreview} onClose={() => setInvoicePreview(null)} />}
+      {confirmDel && <ConfirmModal T={T} title="Delete invoice?" message={`This removes all ${confirmDel.items.length} item(s) on invoice ${confirmDel.invoiceNo}, restores stock, and removes any cash payment tied to it.`} onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteCtgInvoice(confirmDel.invoiceNo); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function CtgInvoiceModal({ T, db, ctgStockReport, nextCtgSaleInvoiceNo, onClose, onSave, initialInvoice }) {
+  const isEditing = !!initialInvoice;
+  const [date, setDate] = useState(initialInvoice?.date || todayISO());
+  const [customerId, setCustomerId] = useState(initialInvoice?.customerId || db.ctgCustomers[0]?.id || "");
+  const [salesmanId, setSalesmanId] = useState(initialInvoice?.salesmanId || db.ctgSalesmen[0]?.id || "");
+  const [items, setItems] = useState(
+    initialInvoice ? initialInvoice.items.map((it) => ({ key: uid("LINE"), productId: it.productId, productName: it.productName, qty: Number(it.qty), tp: Number(it.tp), discount: Number(it.discount || 0) })) : []
+  );
+  const [cashReceived, setCashReceived] = useState(initialInvoice?.cashReceived || 0);
+
+  // Line-item entry (product/qty/tp/discount) before adding to the invoice list below.
+  const [line, setLine] = useState({ productId: db.ctgProducts[0]?.id || "", qty: 1, tp: 0, discount: 0 });
+  const lineStockRow = ctgStockReport.find((r) => r.productId === line.productId);
+  useEffect(() => {
+    if (lineStockRow) setLine((prev) => ({ ...prev, tp: Number(lineStockRow.autoTP.toFixed(2)) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [line.productId]);
+
+  const addItem = () => {
+    const prod = db.ctgProducts.find((p) => p.id === line.productId);
+    if (!prod || !line.qty || !line.tp) return;
+    setItems([...items, {
+      key: uid("LINE"), productId: line.productId, productName: prod.name,
+      qty: Number(line.qty), tp: Number(line.tp), discount: Number(line.discount) || 0,
+    }]);
+    setLine({ productId: db.ctgProducts[0]?.id || "", qty: 1, tp: 0, discount: 0 });
+  };
+  const removeItem = (key) => setItems(items.filter((it) => it.key !== key));
+
+  const grandTotal = items.reduce((a, it) => a + Math.max(it.qty * it.tp - it.discount, 0), 0);
+  const cash = Math.min(Number(cashReceived) || 0, grandTotal);
+  const balanceDue = Math.max(grandTotal - cash, 0);
+
+  const custLabel = (c) => `${c.name}${c.address ? " — " + c.address : c.mobile ? " — " + c.mobile : ""}`;
+
+  return (
+    <ModalShell T={T} title={isEditing ? "Edit invoice" : "New invoice"} onClose={onClose}>
+      <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 8 }}>Invoice: <span className="lg-mono">{isEditing ? initialInvoice.invoiceNo : nextCtgSaleInvoiceNo()}</span></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Date"><input className="lg-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+        <Field T={T} label="Salesman">
+          <select className="lg-input" value={salesmanId} onChange={(e) => setSalesmanId(e.target.value)}>
+            {db.ctgSalesmen.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field T={T} label="Customer (name — address/mobile, to tell same-name customers apart)">
+        <select className="lg-input" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+          {db.ctgCustomers.map((c) => <option key={c.id} value={c.id}>{custLabel(c)}</option>)}
+        </select>
+      </Field>
+
+      <div style={{ borderTop: `1px solid ${T.line}`, marginTop: 10, paddingTop: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Add product to this invoice</div>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+          <select className="lg-input" value={line.productId} onChange={(e) => setLine({ ...line, productId: e.target.value })}>
+            {db.ctgProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <input className="lg-input" type="number" placeholder="Qty" value={line.qty} onChange={(e) => setLine({ ...line, qty: e.target.value })} />
+          <input className="lg-input" type="number" placeholder="TP" value={line.tp} onChange={(e) => setLine({ ...line, tp: e.target.value })} />
+          <input className="lg-input" type="number" placeholder="Discount" value={line.discount} onChange={(e) => setLine({ ...line, discount: e.target.value })} />
+        </div>
+        {lineStockRow && <div style={{ fontSize: 11, color: T.slateLight, marginBottom: 8 }}>In stock: <span className="lg-mono" style={{ color: lineStockRow.remainingQty > 0 ? T.green : T.rule, fontWeight: 600 }}>{lineStockRow.remainingQty}</span></div>}
+        <button type="button" className="lg-btn" style={{ background: T.paper, border: `1px solid ${T.line}`, color: T.ink, width: "100%", marginBottom: 14 }} onClick={addItem} disabled={!line.productId || !line.qty}>
+          <Plus size={14} /> Add product to invoice
+        </button>
+      </div>
+
+      {!!items.length && (
+        <div style={{ marginBottom: 14 }}>
+          <table className="lg-table">
+            <thead><tr><th>Product</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>TP</th><th style={{ textAlign: "right" }}>Disc.</th><th style={{ textAlign: "right" }}>Total</th><th></th></tr></thead>
+            <tbody>
+              {items.map((it) => (
+                <tr key={it.key}>
+                  <td style={{ color: T.ink }}>{it.productName || db.ctgProducts.find((p) => p.id === it.productId)?.name || "—"}</td>
+                  <td className="lg-mono" style={{ textAlign: "right" }}>{it.qty}</td>
+                  <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(it.tp)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", color: T.rule }}>{fmtMoney(it.discount)}</td>
+                  <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(Math.max(it.qty * it.tp - it.discount, 0))}</td>
+                  <td><button onClick={() => removeItem(it.key)} style={{ background: "transparent", border: "none", cursor: "pointer", color: T.rule }}><X size={14} /></button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "10px 0" }}>
+        <span style={{ fontSize: 13, color: T.slate }}>Invoice total</span>
+        <span className="lg-mono" style={{ fontSize: 18, fontWeight: 700 }}>{fmtMoney(grandTotal)}</span>
+      </div>
+
+      <Field T={T} label="Cash received now (leave 0 if fully on credit)">
+        <input className="lg-input" type="number" value={cashReceived} onChange={(e) => setCashReceived(e.target.value)} placeholder="0" />
+      </Field>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "6px 0 14px", padding: "8px 10px", background: hexToRgba(balanceDue > 0 ? T.rule : T.green, 0.1), borderRadius: 8 }}>
+        <span style={{ fontSize: 12.5, color: T.slate }}>{balanceDue > 0 ? "Remaining balance (added to customer due)" : "Fully paid — balance zero"}</span>
+        <span className="lg-mono" style={{ fontSize: 15, fontWeight: 600, color: balanceDue > 0 ? T.rule : T.green }}>{fmtMoney(balanceDue)}</span>
+      </div>
+
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center" }}
+        disabled={!customerId || !salesmanId || !items.length}
+        onClick={() => onSave({ date, customerId, salesmanId, items, cashReceived: cash, editingInvoiceNo: isEditing ? initialInvoice.invoiceNo : undefined })}>
+        {isEditing ? "Update invoice" : "Save invoice"}
+      </button>
+    </ModalShell>
+  );
+}
+
+function CtgInvoicePreviewModal({ T, db, invoice, onClose }) {
+  const cust = db.ctgCustomers.find((c) => c.id === invoice.customerId);
+  const sm = db.ctgSalesmen.find((s) => s.id === invoice.salesmanId);
+
+  const downloadPDF = async () => {
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF({ unit: "pt", format: "a4" });
+    const marginX = 40;
+    let y = 50;
+
+    doc.setFontSize(18); doc.setFont(undefined, "bold");
+    doc.text("CTG — Invoice", marginX, y);
+    doc.setFontSize(10); doc.setFont(undefined, "normal");
+    y += 22;
+    doc.text(`Invoice: ${invoice.invoiceNo}`, marginX, y);
+    doc.text(`Date: ${fmtDateDMY(invoice.date)}`, 400, y);
+    y += 16;
+    doc.text(`Customer: ${cust ? cust.name : "-"}`, marginX, y);
+    y += 14;
+    if (cust?.address) { doc.text(`Address: ${cust.address}`, marginX, y); y += 14; }
+    if (cust?.mobile) { doc.text(`Mobile: ${cust.mobile}`, marginX, y); y += 14; }
+    doc.text(`Salesman: ${sm ? sm.name : "-"}`, marginX, y);
+    y += 22;
+
+    doc.setFont(undefined, "bold");
+    doc.text("Product", marginX, y);
+    doc.text("Qty", 260, y);
+    doc.text("TP", 320, y);
+    doc.text("Discount", 390, y);
+    doc.text("Total", 480, y);
+    doc.setFont(undefined, "normal");
+    y += 6;
+    doc.line(marginX, y, 555, y);
+    y += 16;
+
+    invoice.items.forEach((it) => {
+      doc.text(String(it.productName), marginX, y);
+      doc.text(String(it.qty), 260, y);
+      doc.text(fmtMoney(it.tp), 320, y);
+      doc.text(fmtMoney(it.discount), 390, y);
+      doc.text(fmtMoney(it.total), 480, y);
+      y += 18;
+    });
+
+    y += 6;
+    doc.line(marginX, y, 555, y);
+    y += 20;
+    doc.setFont(undefined, "bold");
+    doc.text(`Invoice total: ${fmtMoney(invoice.grandTotal)}`, 350, y); y += 16;
+    doc.setFont(undefined, "normal");
+    doc.text(`Cash received: ${fmtMoney(invoice.cashReceived)}`, 350, y); y += 16;
+    doc.setFont(undefined, "bold");
+    doc.text(`Balance due: ${fmtMoney(invoice.balanceDue)}`, 350, y);
+
+    doc.save(`invoice-${invoice.invoiceNo}.pdf`);
+  };
+
+  return (
+    <ModalShell T={T} title={`Invoice ${invoice.invoiceNo}`} onClose={onClose}>
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontWeight: 600 }}>{cust ? cust.name : "—"}</div>
+        <div style={{ fontSize: 12, color: T.slate }}>{cust?.address || cust?.mobile || ""}</div>
+        <div style={{ fontSize: 12, color: T.slateLight, marginTop: 2 }}>Salesman: {sm ? sm.name : "—"} · Date: {fmtDateDMY(invoice.date)}</div>
+      </div>
+      <table className="lg-table" style={{ marginBottom: 12 }}>
+        <thead><tr><th>Product</th><th style={{ textAlign: "right" }}>Qty</th><th style={{ textAlign: "right" }}>TP</th><th style={{ textAlign: "right" }}>Total</th></tr></thead>
+        <tbody>
+          {invoice.items.map((it) => (
+            <tr key={it.id}>
+              <td style={{ color: T.ink }}>{it.productName || "—"}</td>
+              <td className="lg-mono" style={{ textAlign: "right" }}>{it.qty}</td>
+              <td className="lg-mono" style={{ textAlign: "right" }}>{fmtMoney(it.tp)}</td>
+              <td className="lg-mono" style={{ textAlign: "right", fontWeight: 600 }}>{fmtMoney(it.total)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ borderTop: `1px solid ${T.line}`, paddingTop: 10, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}><span>Invoice total</span><span className="lg-mono" style={{ fontWeight: 700 }}>{fmtMoney(invoice.grandTotal)}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4, color: T.green }}><span>Cash received</span><span className="lg-mono" style={{ fontWeight: 600 }}>{fmtMoney(invoice.cashReceived)}</span></div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, fontWeight: 700, color: invoice.balanceDue > 0 ? T.rule : T.green }}><span>Balance due</span><span className="lg-mono">{fmtMoney(invoice.balanceDue)}</span></div>
+      </div>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center" }} onClick={downloadPDF}>
+        <Download size={14} /> Download PDF
+      </button>
+    </ModalShell>
+  );
+}
+
+function CtgPaymentsPage({ T, db, saveCtgPayment, deleteCtgPayment }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [q, setQ] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const rows = [...db.ctgPayments].sort((a, b) => (b.date || "").localeCompare(a.date || "")).filter((p) => {
+    const cust = db.ctgCustomers.find((c) => c.id === p.customerId);
+    const matchQ = !q || (cust && cust.name.toLowerCase().includes(q.toLowerCase()));
+    const matchFrom = !from || p.date >= from;
+    const matchTo = !to || p.date <= to;
+    return matchQ && matchFrom && matchTo;
+  });
+  const totalAmount = rows.reduce((a, p) => a + Number(p.amount), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "ctg-cash-receiving.pdf", title: "CTG — Cash Receiving Report",
+    columns: [
+      { header: "Date", key: "date" }, { header: "Customer", key: "customer" },
+      { header: "Amount", key: "amount", align: "right" }, { header: "Method", key: "method" }, { header: "Reference", key: "reference" },
+    ],
+    rows: rows.map((p) => {
+      const cust = db.ctgCustomers.find((c) => c.id === p.customerId);
+      return { date: fmtDateDMY(p.date), customer: cust ? cust.name : "—", amount: fmtMoney(p.amount), method: p.method, reference: p.reference || "—" };
+    }),
+    totalsRow: { date: "Total", amount: fmtMoney(totalAmount) },
+  });
+  return (
+    <div>
+      <PageHeader T={T} title="Cash receiving" subtitle="Money received from a CTG customer"
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})} disabled={!db.ctgCustomers.length}><Plus size={14} /> New payment</button></div>} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search customer" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <input className="lg-input" style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <input className="lg-input" style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Date</th><th>Customer</th><th>Amount</th><th>Method</th><th>Reference</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((p) => {
+              const cust = db.ctgCustomers.find((c) => c.id === p.customerId);
+              return (
+                <tr key={p.id}>
+                  <td className="lg-mono">{fmtDateDMY(p.date)}</td>
+                  <td>{cust ? cust.name : "—"}</td>
+                  <td className="lg-mono" style={{ color: T.green, fontWeight: 600 }}>{fmtMoney(p.amount)}</td>
+                  <td>{p.method}</td>
+                  <td className="lg-mono">{p.reference || "—"}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setConfirmDel(p)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && <tr><td colSpan={6} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No payments recorded yet.</td></tr>}
+          </tbody>
+          {!!rows.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={2} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ fontWeight: 700, color: T.green, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalAmount)}</td>
+                <td colSpan={3} style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </Card>
+      {modal && (
+        <ModalShell T={T} title="New payment" onClose={() => setModal(null)}>
+          <CtgPaymentForm T={T} db={db} onSave={(d) => { saveCtgPayment(d); setModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && <ConfirmModal T={T} title="Delete payment?" message="This will increase the customer's due balance." onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteCtgPayment(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function CtgPaymentForm({ T, db, onSave }) {
+  const [f, setF] = useState({ date: todayISO(), customerId: db.ctgCustomers[0]?.id || "", amount: 0, method: "Cash", reference: "", remarks: "" });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <>
+      <Field T={T} label="Date"><input className="lg-input" type="date" value={f.date} onChange={set("date")} /></Field>
+      <Field T={T} label="Customer">
+        <select className="lg-input" value={f.customerId} onChange={set("customerId")}>
+          {db.ctgCustomers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Amount"><input className="lg-input" type="number" value={f.amount} onChange={set("amount")} /></Field>
+        <Field T={T} label="Method">
+          <select className="lg-input" value={f.method} onChange={set("method")}><option>Cash</option><option>Bank</option><option>Mobile Banking</option><option>Cheque</option></select>
+        </Field>
+      </div>
+      <Field T={T} label="Reference"><input className="lg-input" value={f.reference} onChange={set("reference")} /></Field>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!f.customerId || !f.amount} onClick={() => onSave({ ...f, amount: Number(f.amount) })}>Save payment</button>
+    </>
+  );
+}
+
+function CtgSupplierPaymentsPage({ T, db, saveCtgSupplierPayment, deleteCtgSupplierPayment }) {
+  const [modal, setModal] = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [q, setQ] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const rows = [...db.ctgSupplierPayments].sort((a, b) => (b.date || "").localeCompare(a.date || "")).filter((p) => {
+    const sup = db.ctgSuppliers.find((s) => s.id === p.supplierId);
+    const matchQ = !q || (sup && sup.name.toLowerCase().includes(q.toLowerCase()));
+    const matchFrom = !from || p.date >= from;
+    const matchTo = !to || p.date <= to;
+    return matchQ && matchFrom && matchTo;
+  });
+  const totalAmount = rows.reduce((a, p) => a + Number(p.amount), 0);
+  const exportPDF = () => downloadPDFTable({
+    filename: "ctg-supplier-payments.pdf", title: "CTG — Supplier Payments Report",
+    columns: [
+      { header: "Date", key: "date" }, { header: "Supplier", key: "supplier" },
+      { header: "Amount", key: "amount", align: "right" }, { header: "Method", key: "method" }, { header: "Reference", key: "reference" },
+    ],
+    rows: rows.map((p) => {
+      const sup = db.ctgSuppliers.find((s) => s.id === p.supplierId);
+      return { date: fmtDateDMY(p.date), supplier: sup ? sup.name : "—", amount: fmtMoney(p.amount), method: p.method, reference: p.reference || "—" };
+    }),
+    totalsRow: { date: "Total", amount: fmtMoney(totalAmount) },
+  });
+  return (
+    <div>
+      <PageHeader T={T} title="Payments to suppliers" subtitle="Money paid out to a CTG supplier"
+        action={<div style={{ display: "flex", gap: 8 }}><button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button><button className="lg-btn" style={{ background: T.buttonFill, color: "#fff" }} onClick={() => setModal({})} disabled={!db.ctgSuppliers.length}><Plus size={14} /> New payment</button></div>} />
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200, maxWidth: 280 }}>
+          <Search size={14} style={{ position: "absolute", left: 10, top: 10, color: T.slateLight }} />
+          <input className="lg-input" style={{ paddingLeft: 30 }} placeholder="Search supplier" value={q} onChange={(e) => setQ(e.target.value)} />
+        </div>
+        <input className="lg-input" style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <input className="lg-input" style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
+      <Card T={T} style={{ padding: 0, overflowX: "auto" }}>
+        <table className="lg-table">
+          <thead><tr><th>Date</th><th>Supplier</th><th>Amount</th><th>Method</th><th>Reference</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((p) => {
+              const sup = db.ctgSuppliers.find((s) => s.id === p.supplierId);
+              return (
+                <tr key={p.id}>
+                  <td className="lg-mono">{fmtDateDMY(p.date)}</td>
+                  <td>{sup ? sup.name : "—"}</td>
+                  <td className="lg-mono" style={{ color: T.rule, fontWeight: 600 }}>{fmtMoney(p.amount)}</td>
+                  <td>{p.method}</td>
+                  <td className="lg-mono">{p.reference || "—"}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button onClick={() => setConfirmDel(p)} className="lg-btn" style={{ background: "transparent", color: T.rule, padding: 6 }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && <tr><td colSpan={6} style={{ textAlign: "center", padding: 24, color: T.slateLight }}>No payments recorded yet.</td></tr>}
+          </tbody>
+          {!!rows.length && (
+            <tfoot>
+              <tr>
+                <td colSpan={2} style={{ textAlign: "right", fontWeight: 600, fontSize: 12.5, color: T.slate, borderTop: `2px solid ${T.line}` }}>Total</td>
+                <td className="lg-mono" style={{ fontWeight: 700, color: T.rule, borderTop: `2px solid ${T.line}` }}>{fmtMoney(totalAmount)}</td>
+                <td colSpan={3} style={{ borderTop: `2px solid ${T.line}` }}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </Card>
+      {modal && (
+        <ModalShell T={T} title="New payment to supplier" onClose={() => setModal(null)}>
+          <CtgSupplierPaymentForm T={T} db={db} onSave={(d) => { saveCtgSupplierPayment(d); setModal(null); }} />
+        </ModalShell>
+      )}
+      {confirmDel && <ConfirmModal T={T} title="Delete payment?" message="This will increase the amount owed to this supplier." onCancel={() => setConfirmDel(null)} onConfirm={() => { deleteCtgSupplierPayment(confirmDel.id); setConfirmDel(null); }} />}
+    </div>
+  );
+}
+
+function CtgSupplierPaymentForm({ T, db, onSave }) {
+  const [f, setF] = useState({ date: todayISO(), supplierId: db.ctgSuppliers[0]?.id || "", amount: 0, method: "Cash", reference: "", remarks: "" });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  return (
+    <>
+      <Field T={T} label="Date"><input className="lg-input" type="date" value={f.date} onChange={set("date")} /></Field>
+      <Field T={T} label="Supplier">
+        <select className="lg-input" value={f.supplierId} onChange={set("supplierId")}>
+          {db.ctgSuppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Field T={T} label="Amount"><input className="lg-input" type="number" value={f.amount} onChange={set("amount")} /></Field>
+        <Field T={T} label="Method">
+          <select className="lg-input" value={f.method} onChange={set("method")}><option>Cash</option><option>Bank</option><option>Mobile Banking</option><option>Cheque</option></select>
+        </Field>
+      </div>
+      <Field T={T} label="Reference"><input className="lg-input" value={f.reference} onChange={set("reference")} /></Field>
+      <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+        disabled={!f.supplierId || !f.amount} onClick={() => onSave({ ...f, amount: Number(f.amount) })}>Save payment</button>
+    </>
+  );
+}
+
+function CtgSettingsPage({ T, db, saveCtgSettings }) {
+  const [openingCash, setOpeningCash] = useState(db.ctgSettings.openingCash);
+  const [marginPercent, setMarginPercent] = useState(db.ctgSettings.marginPercent ?? "");
+  const notSetYet = db.ctgSettings.marginPercent === null || db.ctgSettings.marginPercent === undefined || db.ctgSettings.marginPercent === "";
+  const exportPDF = () => downloadPDFTable({
+    filename: "ctg-settings-snapshot.pdf", title: "CTG — Settings Snapshot",
+    columns: [{ header: "Setting", key: "label" }, { header: "Value", key: "value", align: "right" }],
+    rows: [
+      { label: "Opening cash balance", value: fmtMoney(db.ctgSettings.openingCash) },
+      { label: "Default margin %", value: notSetYet ? "Not set" : `${db.ctgSettings.marginPercent}%` },
+      { label: "Purchase invoice sequence", value: String(db.ctgSettings.purchaseInvoiceSeq) },
+      { label: "Sale invoice sequence", value: String(db.ctgSettings.saleInvoiceSeq) },
+    ],
+  });
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+        <button className="lg-btn" style={{ background: "transparent", border: `1px solid ${T.line}`, color: T.ink }} onClick={exportPDF}><Download size={14} /> Download PDF</button>
+      </div>
+      <Card T={T} style={{ maxWidth: 420 }}>
+        <Field T={T} label="CTG opening cash balance"><input className="lg-input" type="number" value={openingCash} onChange={(e) => setOpeningCash(e.target.value)} /></Field>
+        <Field T={T} label="Default margin % (used to auto-suggest TP from DP) — set this yourself, no default">
+          <input className="lg-input" type="number" placeholder="e.g. 40" value={marginPercent} onChange={(e) => setMarginPercent(e.target.value)} />
+        </Field>
+        {notSetYet && (
+          <div style={{ fontSize: 11.5, color: T.rule, marginBottom: 12, marginTop: -6, fontWeight: 600 }}>
+            এখনো সেট করা হয়নি — এখন TP = DP (কোনো margin ছাড়াই) দেখাচ্ছে, যতক্ষণ না তুমি এখানে একটা % দিয়ে Save করছো।
+          </div>
+        )}
+        <div style={{ fontSize: 11.5, color: T.slateLight, marginBottom: 12, marginTop: notSetYet ? 0 : -6 }}>
+          এই % দিয়ে Stock Report আর Sales entry-তে TP (বিক্রয়মূল্য) অটোমেটিক suggest হয় (DP + এই %) — এটা শুধু একটা suggestion, প্রতিটা বিক্রির সময় চাইলে TP নিজে বদলে দিতে পারবে।
+        </div>
+        <button className="lg-btn" style={{ background: T.buttonFill, color: "#fff", width: "100%", justifyContent: "center", marginTop: 6 }}
+          disabled={marginPercent === ""} onClick={() => saveCtgSettings({ openingCash: Number(openingCash), marginPercent: Number(marginPercent) })}>Save</button>
+      </Card>
+      <div style={{ fontSize: 12, color: T.slateLight, marginTop: 14, maxWidth: 420 }}>
+        CTG has its own customers, suppliers, products and cash — completely separate from the main ARHAM TRADERS ledger. Its cash-in-hand also appears as a card on the main Dashboard.
       </div>
     </div>
   );
