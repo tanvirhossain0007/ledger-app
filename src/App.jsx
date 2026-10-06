@@ -1382,47 +1382,55 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
 
   return (
     <div style={{ minHeight: 560, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div style={{ width: "100%", maxWidth: 420 }}>
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
-            <ARLogo size={68} />
+      <div style={{
+        width: "100%", maxWidth: 920, display: "flex", flexWrap: "wrap",
+        alignItems: "center", justifyContent: "center", gap: 48,
+      }}>
+        {/* Left: brand / logo / tagline */}
+        <div style={{ flex: "1 1 360px", textAlign: "center", minWidth: 280 }}>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
+            <ARLogo size={92} />
           </div>
-          <div className="lg-display" style={{ fontSize: 34, fontWeight: 700, color: "#fff", letterSpacing: 1, textShadow: "0 2px 10px rgba(0,0,0,.55)" }}>ARHAM TRADERS</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,.75)", marginTop: 8, textShadow: "0 1px 4px rgba(0,0,0,.5)" }}>462/2 Saheen Academy Road, Feni</div>
+          <div className="lg-display" style={{ fontSize: 44, fontWeight: 700, color: "#fff", letterSpacing: 1.2, textShadow: "0 2px 12px rgba(0,0,0,.55)" }}>ARHAM TRADERS</div>
+          <div style={{ fontSize: 14, color: "rgba(255,255,255,.75)", marginTop: 10, textShadow: "0 1px 4px rgba(0,0,0,.5)" }}>462/2 Saheen Academy Road, Feni</div>
           <div style={{
             fontFamily: "Georgia, 'Times New Roman', serif", fontStyle: "italic", fontWeight: 500,
-            fontSize: 17, color: "rgba(255,255,255,.92)", marginTop: 16, letterSpacing: 0.3,
+            fontSize: 20, color: "rgba(255,255,255,.92)", marginTop: 20, letterSpacing: 0.3,
             textShadow: "0 2px 10px rgba(0,0,0,.55)",
           }}>
             "It's never too late to dream"
           </div>
         </div>
-        <div style={{ background: T.paperCard, border: `1px solid ${T.line}`, borderRadius: 12, padding: 24 }}>
-          <div style={{ display: "flex", gap: 6, marginBottom: 18, background: T.paper, borderRadius: 8, padding: 4 }}>
-            {["admin", "customer"].map((m) => (
-              <button key={m} type="button" onClick={() => { setMode(m); setErr(""); }}
-                style={{
-                  flex: 1, padding: "8px 0", borderRadius: 6, border: "none", fontSize: 13, fontWeight: 600,
-                  cursor: "pointer", background: mode === m ? T.ink : "transparent", color: mode === m ? "#fff" : T.slate,
-                }}>
-                {m === "admin" ? "Admin" : "Customer"}
+
+        {/* Right: login form card */}
+        <div style={{ flex: "1 1 340px", maxWidth: 380, width: "100%" }}>
+          <div style={{ background: T.paperCard, border: `1px solid ${T.line}`, borderRadius: 12, padding: 24 }}>
+            <div style={{ display: "flex", gap: 6, marginBottom: 18, background: T.paper, borderRadius: 8, padding: 4 }}>
+              {["admin", "customer"].map((m) => (
+                <button key={m} type="button" onClick={() => { setMode(m); setErr(""); }}
+                  style={{
+                    flex: 1, padding: "8px 0", borderRadius: 6, border: "none", fontSize: 13, fontWeight: 600,
+                    cursor: "pointer", background: mode === m ? T.ink : "transparent", color: mode === m ? "#fff" : T.slate,
+                  }}>
+                  {m === "admin" ? "Admin" : "Customer"}
+                </button>
+              ))}
+            </div>
+            <form onSubmit={submit}>
+              <label style={{ fontSize: 12, color: T.slate, fontWeight: 600 }}>{mode === "admin" ? "Email" : "Username"}</label>
+              <input className="lg-input" style={{ marginTop: 4, marginBottom: 14 }} value={u} onChange={(e) => setU(e.target.value)} placeholder={mode === "admin" ? "admin@example.com" : "e.g. rahim01"} />
+              <label style={{ fontSize: 12, color: T.slate, fontWeight: 600 }}>Password</label>
+              <input className="lg-input" type="password" style={{ marginTop: 4, marginBottom: 8 }} value={p} onChange={(e) => setP(e.target.value)} placeholder="••••••••" />
+              {err && <div style={{ color: T.rule, fontSize: 12, marginBottom: 10 }}>{err}</div>}
+              <button className="lg-btn" type="submit" disabled={submitting} style={{ width: "100%", background: T.buttonFill, color: "#fff", justifyContent: "center", padding: "10px 0", marginTop: 6, opacity: submitting ? 0.7 : 1 }}>
+                {submitting ? "Signing in…" : "Sign in"}
               </button>
-            ))}
+            </form>
           </div>
-          <form onSubmit={submit}>
-            <label style={{ fontSize: 12, color: T.slate, fontWeight: 600 }}>{mode === "admin" ? "Email" : "Username"}</label>
-            <input className="lg-input" style={{ marginTop: 4, marginBottom: 14 }} value={u} onChange={(e) => setU(e.target.value)} placeholder={mode === "admin" ? "admin@example.com" : "e.g. rahim01"} />
-            <label style={{ fontSize: 12, color: T.slate, fontWeight: 600 }}>Password</label>
-            <input className="lg-input" type="password" style={{ marginTop: 4, marginBottom: 8 }} value={p} onChange={(e) => setP(e.target.value)} placeholder="••••••••" />
-            {err && <div style={{ color: T.rule, fontSize: 12, marginBottom: 10 }}>{err}</div>}
-            <button className="lg-btn" type="submit" disabled={submitting} style={{ width: "100%", background: T.buttonFill, color: "#fff", justifyContent: "center", padding: "10px 0", marginTop: 6, opacity: submitting ? 0.7 : 1 }}>
-              {submitting ? "Signing in…" : "Sign in"}
-            </button>
-          </form>
+          <button className="lg-btn" onClick={() => setDark(!dark)} style={{ margin: "18px auto 0", background: "rgba(255,255,255,.14)", color: "#fff", borderRadius: 20, padding: "6px 14px" }}>
+            {dark ? <Sun size={14} /> : <Moon size={14} />} {dark ? "Light mode" : "Dark mode"}
+          </button>
         </div>
-        <button className="lg-btn" onClick={() => setDark(!dark)} style={{ margin: "18px auto 0", background: "rgba(255,255,255,.14)", color: "#fff", borderRadius: 20, padding: "6px 14px" }}>
-          {dark ? <Sun size={14} /> : <Moon size={14} />} {dark ? "Light mode" : "Dark mode"}
-        </button>
       </div>
     </div>
   );
