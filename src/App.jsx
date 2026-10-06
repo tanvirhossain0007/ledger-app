@@ -1382,13 +1382,20 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
 
   return (
     <div style={{ minHeight: 560, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div style={{ width: "100%", maxWidth: 380 }}>
-        <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
-            <ARLogo size={52} />
+      <div style={{ width: "100%", maxWidth: 420 }}>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+            <ARLogo size={68} />
           </div>
-          <div className="lg-display" style={{ fontSize: 26, fontWeight: 600, color: "#fff", letterSpacing: 0.5, textShadow: "0 2px 8px rgba(0,0,0,.5)" }}>ARHAM TRADERS</div>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,.75)", marginTop: 6, textShadow: "0 1px 4px rgba(0,0,0,.5)" }}>462/2 Saheen Academy Road, Feni</div>
+          <div className="lg-display" style={{ fontSize: 34, fontWeight: 700, color: "#fff", letterSpacing: 1, textShadow: "0 2px 10px rgba(0,0,0,.55)" }}>ARHAM TRADERS</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,.75)", marginTop: 8, textShadow: "0 1px 4px rgba(0,0,0,.5)" }}>462/2 Saheen Academy Road, Feni</div>
+          <div style={{
+            fontFamily: "Georgia, 'Times New Roman', serif", fontStyle: "italic", fontWeight: 500,
+            fontSize: 17, color: "rgba(255,255,255,.92)", marginTop: 16, letterSpacing: 0.3,
+            textShadow: "0 2px 10px rgba(0,0,0,.55)",
+          }}>
+            "It's never too late to dream"
+          </div>
         </div>
         <div style={{ background: T.paperCard, border: `1px solid ${T.line}`, borderRadius: 12, padding: 24 }}>
           <div style={{ display: "flex", gap: 6, marginBottom: 18, background: T.paper, borderRadius: 8, padding: 4 }}>
