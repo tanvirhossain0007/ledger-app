@@ -1383,8 +1383,8 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
   return (
     <div style={{ minHeight: 560, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
       <div style={{
-        width: "100%", maxWidth: 920, display: "flex", flexWrap: "wrap",
-        alignItems: "center", justifyContent: "center", gap: 48,
+        width: "100%", maxWidth: 1040, display: "flex", flexWrap: "wrap",
+        alignItems: "center", justifyContent: "center", gap: 96,
       }}>
         {/* Left: brand / logo / tagline */}
         <div style={{ flex: "1 1 360px", textAlign: "center", minWidth: 280 }}>
