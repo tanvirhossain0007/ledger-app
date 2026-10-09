@@ -1254,7 +1254,9 @@ export default function App() {
     <div style={{
       fontFamily: "'Inter', sans-serif",
       backgroundColor: "#0E1A28",
-      backgroundImage: `url('${role ? "/app-bg.jpg" : "/arham-bg.jpg"}')`,
+      backgroundImage: role
+        ? `url('/app-bg.jpg')`
+        : "radial-gradient(ellipse at 50% 38%, rgba(0,150,255,.30), transparent 55%), radial-gradient(ellipse at 12% 88%, rgba(0,210,255,.14), transparent 50%), radial-gradient(ellipse at 88% 82%, rgba(130,70,255,.16), transparent 50%), linear-gradient(180deg,#06101d 0%,#0a1d33 60%,#07121f 100%)",
       backgroundSize: "cover",
       backgroundPosition: "center",
       backgroundAttachment: "fixed",
@@ -1265,8 +1267,26 @@ export default function App() {
       transition: "background .2s", overflowX: "hidden",
     }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Dancing+Script:wght@600;700&family=Great+Vibes&display=swap');
         .lg-mono { font-family: 'IBM Plex Mono', monospace; }
+        .lg-col-form { order: 1; }
+        .lg-col-mid { order: 2; }
+        .lg-col-brand { order: 3; }
+        @media (max-width: 1020px) {
+          .lg-col-mid { order: 1; }
+          .lg-col-brand { order: 2; }
+          .lg-col-form { order: 3; }
+        }
+        @keyframes rgbShift { 0% { background-position: 0% 50%; } 100% { background-position: 300% 50%; } }
+        .lg-rgb-text {
+          background: linear-gradient(90deg,#ff0040,#ff9a00,#ffee00,#00e676,#00b0ff,#7c4dff,#ff00e5,#ff0040);
+          background-size: 300% 100%;
+          -webkit-background-clip: text; background-clip: text;
+          -webkit-text-fill-color: transparent; color: transparent;
+          animation: rgbShift 5s linear infinite;
+          text-shadow: none !important;
+          filter: drop-shadow(0 2px 10px rgba(0,0,0,.5));
+        }
         .lg-display { font-family: 'Fraunces', serif; }
         .lg-btn { cursor:pointer; border:none; border-radius:8px; padding:8px 14px; font-size:13px; font-weight:600; display:inline-flex; align-items:center; gap:6px; transition:opacity .15s; }
         .lg-btn:hover { opacity:.85; }
@@ -1381,29 +1401,13 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
   };
 
   return (
-    <div style={{ minHeight: 560, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "32px 24px", boxSizing: "border-box" }}>
       <div style={{
-        width: "100%", maxWidth: 1040, display: "flex", flexWrap: "wrap",
-        alignItems: "center", justifyContent: "center", gap: 96,
+        width: "100%", maxWidth: 1400, display: "flex", flexWrap: "wrap",
+        alignItems: "center", justifyContent: "center", gap: 64,
       }}>
-        {/* Left: brand / logo / tagline */}
-        <div style={{ flex: "1 1 360px", textAlign: "center", minWidth: 280 }}>
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
-            <ARLogo size={92} />
-          </div>
-          <div className="lg-display" style={{ fontSize: 44, fontWeight: 700, color: "#fff", letterSpacing: 1.2, textShadow: "0 2px 12px rgba(0,0,0,.55)" }}>ARHAM TRADERS</div>
-          <div style={{ fontSize: 14, color: "rgba(255,255,255,.75)", marginTop: 10, textShadow: "0 1px 4px rgba(0,0,0,.5)" }}>462/2 Saheen Academy Road, Feni</div>
-          <div style={{
-            fontFamily: "Georgia, 'Times New Roman', serif", fontStyle: "italic", fontWeight: 500,
-            fontSize: 20, color: "rgba(255,255,255,.92)", marginTop: 20, letterSpacing: 0.3,
-            textShadow: "0 2px 10px rgba(0,0,0,.55)",
-          }}>
-            "It's never too late to dream"
-          </div>
-        </div>
-
-        {/* Right: login form card */}
-        <div style={{ flex: "1 1 340px", maxWidth: 380, width: "100%" }}>
+        {/* LEFT: login form */}
+        <div className="lg-col-form" style={{ flex: "1 1 320px", maxWidth: 380, width: "100%" }}>
           <div style={{ background: T.paperCard, border: `1px solid ${T.line}`, borderRadius: 12, padding: 24 }}>
             <div style={{ display: "flex", gap: 6, marginBottom: 18, background: T.paper, borderRadius: 8, padding: 4 }}>
               {["admin", "customer"].map((m) => (
@@ -1431,12 +1435,47 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
             {dark ? <Sun size={14} /> : <Moon size={14} />} {dark ? "Light mode" : "Dark mode"}
           </button>
         </div>
+
+        {/* MIDDLE: big logo + RGB tagline underneath */}
+        <div className="lg-col-mid" style={{ flex: "1 1 340px", textAlign: "center", minWidth: 280 }}>
+          <img
+            src="/arham-shield-logo.jpg"
+            alt="Arham Traders"
+            style={{
+              width: "min(380px, 80vw)", height: "min(380px, 80vw)", objectFit: "contain",
+              mixBlendMode: "screen",
+              WebkitMaskImage: "radial-gradient(circle, #000 55%, transparent 74%)",
+              maskImage: "radial-gradient(circle, #000 55%, transparent 74%)",
+              filter: "drop-shadow(0 0 28px rgba(0,170,255,.55))",
+            }}
+          />
+          <div className="lg-rgb-text" style={{
+            fontFamily: "'Great Vibes', 'Dancing Script', cursive", fontSize: "clamp(34px, 3.4vw, 54px)",
+            lineHeight: 1.15, marginTop: 8,
+          }}>
+            It's never too late to dream
+          </div>
+        </div>
+
+        {/* RIGHT: brand name + address */}
+        <div className="lg-col-brand" style={{ flex: "1 1 320px", textAlign: "center", minWidth: 280 }}>
+          <div style={{
+            fontFamily: "'Dancing Script', cursive", fontWeight: 700, color: "#fff",
+            fontSize: "clamp(54px, 5.4vw, 92px)", lineHeight: 1.0,
+            textShadow: "0 0 24px rgba(0,170,255,.55), 0 3px 12px rgba(0,0,0,.6)",
+          }}>
+            <div>Arham</div>
+            <div>Traders</div>
+          </div>
+          <div style={{ fontSize: 15, color: "rgba(255,255,255,.82)", marginTop: 18, letterSpacing: 0.4, textShadow: "0 1px 4px rgba(0,0,0,.6)" }}>
+            462/2 Shaheen Academy Road, Feni
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-// ================= SHELL =================
 function NavButton({ item, active, onClick, T }) {
   const [hover, setHover] = useState(false);
   const color = item.color || T.gold;
