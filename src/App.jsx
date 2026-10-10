@@ -1408,31 +1408,32 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
       }}>
         {/* LEFT: login form */}
         <div className="lg-col-form" style={{ flex: "1 1 320px", maxWidth: 380, width: "100%" }}>
-          <div style={{ background: T.paperCard, border: `1px solid ${T.line}`, borderRadius: 12, padding: 24 }}>
-            <div style={{ display: "flex", gap: 6, marginBottom: 18, background: T.paper, borderRadius: 8, padding: 4 }}>
+          <div style={{ background: "rgba(7,18,32,.74)", border: "1px solid rgba(120,200,255,.35)", borderRadius: 14, padding: 24, backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", boxShadow: "0 0 32px rgba(0,150,255,.25)" }}>
+            <div style={{ display: "flex", gap: 6, marginBottom: 18, background: "rgba(255,255,255,.08)", borderRadius: 8, padding: 4 }}>
               {["admin", "customer"].map((m) => (
                 <button key={m} type="button" onClick={() => { setMode(m); setErr(""); }}
                   style={{
-                    flex: 1, padding: "8px 0", borderRadius: 6, border: "none", fontSize: 13, fontWeight: 600,
-                    cursor: "pointer", background: mode === m ? T.ink : "transparent", color: mode === m ? "#fff" : T.slate,
+                    flex: 1, padding: "6px 0", borderRadius: 6, fontSize: 13, fontWeight: 600,
+                    cursor: "pointer", background: mode === m ? "rgba(0,0,0,.5)" : "transparent",
+                    border: mode === m ? "1px solid rgba(255,255,255,.28)" : "1px solid transparent",
                   }}>
-                  {m === "admin" ? "Admin" : "Customer"}
+                  <span className="lg-rgb-text" style={{ fontFamily: "'Dancing Script', cursive", fontSize: 19, fontWeight: 700, animationDelay: m === "admin" ? "0s" : "-2s" }}>{m === "admin" ? "Admin" : "Customer"}</span>
                 </button>
               ))}
             </div>
             <form onSubmit={submit}>
-              <label style={{ fontSize: 12, color: T.slate, fontWeight: 600 }}>{mode === "admin" ? "Email" : "Username"}</label>
+              <label className="lg-rgb-text" style={{ fontFamily: "'Dancing Script', cursive", fontSize: 20, fontWeight: 700, animationDelay: "-1s" }}>{mode === "admin" ? "Email" : "Username"}</label>
               <input className="lg-input" style={{ marginTop: 4, marginBottom: 14 }} value={u} onChange={(e) => setU(e.target.value)} placeholder={mode === "admin" ? "admin@example.com" : "e.g. rahim01"} />
-              <label style={{ fontSize: 12, color: T.slate, fontWeight: 600 }}>Password</label>
+              <label className="lg-rgb-text" style={{ fontFamily: "'Dancing Script', cursive", fontSize: 20, fontWeight: 700, animationDelay: "-3s" }}>Password</label>
               <input className="lg-input" type="password" style={{ marginTop: 4, marginBottom: 8 }} value={p} onChange={(e) => setP(e.target.value)} placeholder="••••••••" />
-              {err && <div style={{ color: T.rule, fontSize: 12, marginBottom: 10 }}>{err}</div>}
-              <button className="lg-btn" type="submit" disabled={submitting} style={{ width: "100%", background: T.buttonFill, color: "#fff", justifyContent: "center", padding: "10px 0", marginTop: 6, opacity: submitting ? 0.7 : 1 }}>
-                {submitting ? "Signing in…" : "Sign in"}
+              {err && <div style={{ color: "#ff8f8f", fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{err}</div>}
+              <button className="lg-btn" type="submit" disabled={submitting} style={{ width: "100%", background: "linear-gradient(180deg,#10243d,#0a1727)", border: "1px solid rgba(120,200,255,.4)", color: "#fff", justifyContent: "center", padding: "6px 0", marginTop: 6, opacity: submitting ? 0.7 : 1 }}>
+                <span className="lg-rgb-text" style={{ fontFamily: "'Dancing Script', cursive", fontSize: 24, fontWeight: 700 }}>{submitting ? "Signing in…" : "Sign in"}</span>
               </button>
             </form>
           </div>
           <button className="lg-btn" onClick={() => setDark(!dark)} style={{ margin: "18px auto 0", background: "rgba(255,255,255,.14)", color: "#fff", borderRadius: 20, padding: "6px 14px" }}>
-            {dark ? <Sun size={14} /> : <Moon size={14} />} {dark ? "Light mode" : "Dark mode"}
+            {dark ? <Sun size={14} color="#ffd54a" /> : <Moon size={14} color="#9ad7ff" />} <span className="lg-rgb-text" style={{ fontFamily: "'Dancing Script', cursive", fontSize: 18, fontWeight: 700, animationDelay: "-4s" }}>{dark ? "Light mode" : "Dark mode"}</span>
           </button>
         </div>
 
@@ -1459,15 +1460,14 @@ function LoginScreen({ T, onAdmin, onCustomer, dark, setDark }) {
 
         {/* RIGHT: brand name + address */}
         <div className="lg-col-brand" style={{ flex: "1 1 320px", textAlign: "center", minWidth: 280 }}>
-          <div style={{
-            fontFamily: "'Dancing Script', cursive", fontWeight: 700, color: "#fff",
-            fontSize: "clamp(54px, 5.4vw, 92px)", lineHeight: 1.0,
-            textShadow: "0 0 24px rgba(0,170,255,.55), 0 3px 12px rgba(0,0,0,.6)",
+          <div className="lg-rgb-text" style={{
+            fontFamily: "'Dancing Script', cursive", fontWeight: 700,
+            fontSize: "clamp(54px, 5.4vw, 92px)", lineHeight: 1.0, animationDelay: "-2.5s",
           }}>
             <div>Arham</div>
             <div>Traders</div>
           </div>
-          <div style={{ fontSize: 15, color: "rgba(255,255,255,.82)", marginTop: 18, letterSpacing: 0.4, textShadow: "0 1px 4px rgba(0,0,0,.6)" }}>
+          <div className="lg-rgb-text" style={{ fontFamily: "'Dancing Script', cursive", fontSize: "clamp(22px, 2vw, 30px)", fontWeight: 700, marginTop: 18, animationDelay: "-0.5s" }}>
             462/2 Shaheen Academy Road, Feni
           </div>
         </div>
